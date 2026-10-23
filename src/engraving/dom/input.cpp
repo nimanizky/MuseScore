@@ -234,6 +234,7 @@ void InputState::update(Selection& selection)
     setNotes({});
     setNumericPulseRegisterExplicit(false);
     setNumericPulseRegisterOffset(0);
+    setNumericPulseRow(0);
     setBeyondScore(false);
 
     Note* n1 = nullptr;
@@ -324,6 +325,9 @@ void InputState::update(Selection& selection)
         // inherit the clicked element's rhythm or register for the next note.
         setDuration(DurationType::V_QUARTER);
         setNotes({});
+        if (n && numericPulseDefaultChordNoteLimit(n->staff(), n->tick()) > 1) {
+            setNumericPulseRow(mu::engraving::numericPulseNoteRow(n));
+        }
     }
 
     if (cr) {

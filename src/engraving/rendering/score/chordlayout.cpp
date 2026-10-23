@@ -2824,7 +2824,9 @@ void ChordLayout::layoutChords3(const std::vector<Chord*>& chords,
         std::vector<Note*> chordNotes = chord->notes();
         std::sort(chordNotes.begin(), chordNotes.end(),
                   [](Note* n1, const Note* n2) ->bool { return n1->line() < n2->line(); });
-        for (Note* note : chordNotes) {
+        const bool useNumericChordRows = numericPulseDefaultChordNoteLimit(chord->staff(), chord->tick()) > 1;
+        for (size_t noteIndex = 0; noteIndex < chordNotes.size(); ++noteIndex) {
+            Note* note = chordNotes[noteIndex];
             double noteX = 0.0;
             if (note->ldata()->mirror()) {
                 if (_up) {
@@ -2837,8 +2839,14 @@ void ChordLayout::layoutChords3(const std::vector<Chord*>& chords,
             }
 
             const NumericPulseProfile* numericProfile = numericPulseProfile(note->staff(), note->tick());
+            if (useNumericChordRows) {
+                noteX = 0.0;
+            }
             double ny = numericProfile && numericProfile->fixedBaseline
-                        ? 0.0 : (note->line() + stepOffset) * stepDistance;
+                        ? (useNumericChordRows
+                           ? numericPulseNoteRow(note) * numericPulseRowDistance(note->staff(), note->tick())
+                           : 0.0)
+                        : (note->line() + stepOffset) * stepDistance;
             if (note->ldata()->pos().y() != ny) {
                 note->mutldata()->setPosY(ny);
                 if (stem) {

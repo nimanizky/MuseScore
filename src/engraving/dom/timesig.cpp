@@ -32,6 +32,7 @@
 #include "score.h"
 #include "segment.h"
 #include "staff.h"
+#include "numericpulseprofile.h"
 
 #include "log.h"
 
@@ -402,6 +403,9 @@ Sid TimeSig::getPropertyStyle(Pid id) const
 
 TimeSigPlacement TimeSig::timeSigPlacement() const
 {
+    if (numericPulseDefaultChordNoteLimit(staff(), tick()) > 1) {
+        return TimeSigPlacement::NORMAL;
+    }
     return style().styleV(Sid::timeSigPlacement).value<TimeSigPlacement>();
 }
 

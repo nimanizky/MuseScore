@@ -47,6 +47,7 @@ class NoteInputBarModel : public muse::uicomponents::AbstractMenuModel, public Q
 
     Q_PROPERTY(bool isInputAllowed READ isInputAllowed NOTIFY isInputAllowedChanged)
     Q_PROPERTY(bool usesNumericPulse READ usesNumericPulse NOTIFY usesNumericPulseChanged)
+    Q_PROPERTY(QString numericPulseFontFamily READ numericPulseFontFamily NOTIFY usesNumericPulseChanged)
 
     muse::ContextInject<muse::ui::IUiState> uiState = { this };
     muse::ContextInject<context::IGlobalContext> context = { this };
@@ -60,6 +61,7 @@ public:
 
     bool isInputAllowed() const;
     bool usesNumericPulse() const;
+    QString numericPulseFontFamily() const;
 
     Q_INVOKABLE void handleMenuItem(const QString& itemId) override;
 
@@ -100,5 +102,7 @@ private:
 
     std::unique_ptr<muse::async::Asyncable> m_noteInputStateReceiver;
     QString m_selectedNumericDegreeAction;
+    QString m_loadedNumericProfileId;
+    bool m_noteInputRefreshScheduled = false;
 };
 }

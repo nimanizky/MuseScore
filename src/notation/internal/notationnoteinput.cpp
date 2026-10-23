@@ -93,6 +93,11 @@ NotationNoteInput::NotationNoteInput(const IGetScore* getScore, INotationInterac
             is.setNotes({});
             is.setNumericPulseRegisterExplicit(false);
             is.setNumericPulseRegisterOffset(0);
+            const EngravingItem* selected = score()->selection().element();
+            if (selected && selected->isNote()
+                && numericPulseDefaultChordNoteLimit(selected->staff(), selected->tick()) > 1) {
+                is.setNumericPulseRow(numericPulseNoteRow(toNote(selected)));
+            }
             notifyAboutStateChanged();
         } else if (shouldSetupInputNote()) {
             const NoteInputState& is = state();
@@ -140,13 +145,13 @@ void NotationNoteInput::startNoteInput(NoteInputMethod method, bool focusNotatio
     const bool numericPulseInput = numericPulseProfile(staff, is.tick());
 
     Duration d(is.duration());
-    if (numericPulseInput) {
+    if (!d.isValid() || d.isZero() || d.type() == DurationType::V_MEASURE) {
         is.setDuration(Duration(DurationType::V_QUARTER));
+    }
+    if (numericPulseInput) {
         is.setNotes({});
         is.setNumericPulseRegisterExplicit(false);
         is.setNumericPulseRegisterOffset(0);
-    } else if (!d.isValid() || d.isZero() || d.type() == DurationType::V_MEASURE) {
-        is.setDuration(Duration(DurationType::V_QUARTER));
     }
     is.setAccidentalType(AccidentalType::NONE);
 
@@ -979,7 +984,12 @@ muse::RectF NotationNoteInput::cursorRect() const
 
     const double lineDist = staffType->lineDistance().val() * localSpatium;
 
-    if (isTabStaff && inputStateStringsCount >= 0 && inputStateStringsCount <= instrumentStringsCount) {
+    if (numericPulseDefaultChordNoteLimit(staff, inputState.tick()) > 1) {
+        const int row = std::clamp(inputState.numericPulseRow(), 0,
+                                   numericPulseChordNoteLimit(staff, inputState.tick()) - 1);
+        y += row * numericPulseRowDistance(staff, inputState.tick()) - 1.75 * localSpatium;
+        h = 2.5 * localSpatium;
+    } else if (isTabStaff && inputStateStringsCount >= 0 && inputStateStringsCount <= instrumentStringsCount) {
         h = lineDist;
         y += staffType->physStringToYOffset(inputStateStringsCount).toAbsolute(localSpatium);
         y -= (staffType->onLines() ? lineDist * 0.5 : lineDist);

@@ -21,6 +21,7 @@
  */
 
 #include "barline.h"
+#include "numericpulseprofile.h"
 
 #include "translation.h"
 
@@ -330,6 +331,19 @@ void BarLine::calcY()
         }
     }
 
+    if (numericPulseDefaultChordNoteLimit(staff1, tick) > 1) {
+        y1 = offset - lineWidth;
+        if (!spanStaff) {
+            y2 = offset + staff1->staffHeight(tick) + lineWidth;
+            // At a boundary, the barline must also reach any extra rails in
+            // the adjacent measure within the same system.
+            const Measure* next = measure->nextMeasure();
+            if (rtick().isNotZero() && next && next->system() == system
+                && numericPulseDefaultChordNoteLimit(staff1, next->tick()) > 1) {
+                y2 = std::max(y2, offset + staff1->staffHeight(next->tick()) + lineWidth);
+            }
+        }
+    }
     data->y1 = y1;
     data->y2 = y2;
 }

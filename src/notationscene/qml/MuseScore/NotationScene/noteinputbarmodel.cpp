@@ -22,6 +22,7 @@
 #include "noteinputbarmodel.h"
 
 #include <string>
+#include <QTimer>
 
 #include "types/translatablestring.h"
 
@@ -146,8 +147,24 @@ void NoteInputBarModel::init()
             return;
         }
         notation->interaction()->noteInput()->stateChanged().onNotify(m_noteInputStateReceiver.get(), [this]() {
-            load();
-            emit usesNumericPulseChanged();
+            if (m_noteInputRefreshScheduled) {
+                return;
+            }
+            m_noteInputRefreshScheduled = true;
+            QTimer::singleShot(0, this, [this]() {
+                m_noteInputRefreshScheduled = false;
+                const auto* profile = activeNumericPulseProfile();
+                const QString profileId = profile ? profile->id.toQString() : QString();
+                if (!profile || profileId != m_loadedNumericProfileId) {
+                    load();
+                    emit usesNumericPulseChanged();
+                } else {
+                    // Update once using the final state, never the temporary
+                    // empty selection while a deletion/undo is in progress.
+                    // Local controls are not registered global actions.
+                    onActionsStateChanges({});
+                }
+            });
         });
     };
 
@@ -177,6 +194,7 @@ void NoteInputBarModel::load()
     MenuItemList items;
     const engraving::NumericPulseProfile* numericProfile = activeNumericPulseProfile();
     const bool usesNumericProfile = numericProfile != nullptr;
+    m_loadedNumericProfileId = numericProfile ? numericProfile->id.toQString() : QString();
     const QString selectedDurationAction = usesNumericProfile ? currentNumericPulseDurationAction() : QString();
     const int selectedRegister = usesNumericProfile ? currentNumericPulseRegister() : 0;
 
@@ -201,9 +219,19 @@ void NoteInputBarModel::load()
         inputAction.title = TranslatableString::untranslatable("Numeric pulse input");
         items << makeActionItem(inputAction, QStringLiteral("numeric-input"));
 
+        UiAction translationAction = uiActionsRegister()->action("toggle-kepatihan-translation");
+        translationAction.title = TranslatableString::untranslatable("T");
+        items << makeActionItem(translationAction, QStringLiteral("numeric-translation"));
+
         for (const engraving::NumericPulseDegree& degree : numericProfile->degrees) {
             UiAction action = uiActionsRegister()->action(ActionCode(degree.action.toStdString()));
             action.title = TranslatableString::untranslatable(degree.label);
+            if (numericProfile->id == u"kendhang-kepatihan") {
+                static const char* const strokeNames[] { "Ta stroke", "Tung stroke", "Dha stroke" };
+                if (degree.number >= 1 && degree.number <= 3) {
+                    action.description = TranslatableString::untranslatable(strokeNames[degree.number - 1]);
+                }
+            }
             action.iconCode = IconCode::Code::NONE;
             MenuItem* item = makeActionItem(action, QStringLiteral("numeric-degree"));
             UiActionState state = item->state();
@@ -338,6 +366,12 @@ bool NoteInputBarModel::usesNumericPulse() const
     return activeNumericPulseProfile() != nullptr;
 }
 
+QString NoteInputBarModel::numericPulseFontFamily() const
+{
+    const engraving::NumericPulseProfile* profile = activeNumericPulseProfile();
+    return profile ? profile->fontFamily.toQString() : QString();
+}
+
 void NoteInputBarModel::handleMenuItem(const QString& itemId)
 {
     const engraving::NumericPulseProfile* numericProfile = activeNumericPulseProfile();
@@ -349,6 +383,15 @@ void NoteInputBarModel::handleMenuItem(const QString& itemId)
     INotationPtr notation = context()->currentNotation();
     INotationInteractionPtr interaction = notation ? notation->interaction() : nullptr;
 
+    if (usesNumericProfile && numericDuration && interaction
+        && !interaction->selection()->notes().empty()) {
+        // Editing an existing rhythm must not first start note entry, reset
+        // its duration to a quarter, or reset the pitch register. Dispatch the
+        // requested duration once and keep the user's current input mode.
+        AbstractMenuModel::handleMenuItem(itemId);
+        return;
+    }
+
     if (usesNumericProfile && numericRegister && interaction) {
         INotationNoteInputPtr noteInput = interaction->noteInput();
         INotationSelectionPtr selection = interaction->selection();
@@ -356,7 +399,7 @@ void NoteInputBarModel::handleMenuItem(const QString& itemId)
             noteInput->startNoteInput(NoteInputMethod::BY_NOTE_NAME);
         }
         interaction->setNumericPulseRegister(numericRegisterForAction(itemId));
-        load();
+        onActionsStateChanges({});
         return;
     }
 
@@ -397,7 +440,7 @@ void NoteInputBarModel::handleMenuItem(const QString& itemId)
         // input can use its stale Western action state and do nothing. Numeric
         // Pulse's dot is a direct event-entry control, so insert it explicitly.
         interaction->putRestToSelection();
-        load();
+        onActionsStateChanges({});
         return;
     }
 
@@ -405,7 +448,7 @@ void NoteInputBarModel::handleMenuItem(const QString& itemId)
 
     if (selectNumericDegree) {
         m_selectedNumericDegreeAction = itemId;
-        load();
+        onActionsStateChanges({});
     }
 }
 
@@ -418,6 +461,7 @@ void NoteInputBarModel::onActionsStateChanges(const ActionCodeList& codes)
     }
 
     const QString selectedDurationAction = currentNumericPulseDurationAction();
+    const int selectedRegister = currentNumericPulseRegister();
     for (MenuItem* item : items()) {
         if (!item) {
             continue;
@@ -428,7 +472,7 @@ void NoteInputBarModel::onActionsStateChanges(const ActionCodeList& codes)
             state.checked = item->id() == m_selectedNumericDegreeAction;
             item->setState(state);
         } else if (item->section() == QStringLiteral("numeric-register")) {
-            state.checked = numericRegisterForAction(item->id()) == currentNumericPulseRegister();
+            state.checked = numericRegisterForAction(item->id()) == selectedRegister;
             item->setState(state);
         } else if (isDurationAction(item->id())) {
             state.checked = item->id() == selectedDurationAction;

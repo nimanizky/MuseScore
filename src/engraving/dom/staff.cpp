@@ -38,6 +38,7 @@
 #include "measure.h"
 #include "mscore.h"
 #include "note.h"
+#include "numericpulseprofile.h"
 #include "ottava.h"
 #include "part.h"
 #include "score.h"
@@ -1000,12 +1001,14 @@ Fraction Staff::currentKeyTick(const Fraction& tick) const
 
 double Staff::staffHeight() const
 {
-    Fraction tick = Fraction(0, 1);
-    return (lines(tick) - 1) * spatium(tick) * staffType(tick)->lineDistance().val();
+    return staffHeight(Fraction(0, 1));
 }
 
 double Staff::staffHeight(const Fraction& tick) const
 {
+    if (numericPulseDefaultChordNoteLimit(this, tick) > 1) {
+        return (numericPulseChordNoteLimit(this, tick) - 1) * numericPulseRowDistance(this, tick);
+    }
     return (lines(tick) - 1) * spatium(tick) * staffType(tick)->lineDistance().val();
 }
 

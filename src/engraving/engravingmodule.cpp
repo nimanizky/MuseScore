@@ -89,6 +89,7 @@ static void engraving_init_qrc()
     Q_INIT_RESOURCE(fonts_Petaluma);
     Q_INIT_RESOURCE(fonts_FinaleMaestro);
     Q_INIT_RESOURCE(fonts_FinaleBroadway);
+    Q_INIT_RESOURCE(fonts_KepatihanPro);
     Q_INIT_RESOURCE(fonts_Tabulature);
 #endif
 }
@@ -172,6 +173,7 @@ void EngravingModule::onInit(const IApplication::RunMode&)
         fdb->addFont(FontDataKey(u"Edwin", false, true), ":/fonts/edwin/Edwin-Italic.otf");
         fdb->addFont(FontDataKey(u"Edwin", true, false), ":/fonts/edwin/Edwin-Bold.otf");
         fdb->addFont(FontDataKey(u"Edwin", true, true), ":/fonts/edwin/Edwin-BdIta.otf");
+        fdb->addFont(FontDataKey(u"KepatihanPro"), ":/fonts/kepatihanpro/KepatihanPro.ttf");
 
         // MusicSymbol[Text]
         auto addMusicFont = [this, fdb](const std::string& name, const FontDataKey& fontDataKey, const muse::io::path_t& filePath){

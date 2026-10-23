@@ -77,7 +77,7 @@ double numericPulseBeamAnchorY(const Beam* beam, const Chord* referenceChord)
         const NumericPulseProfile* profile = numericPulseProfile(note->staff(), note->tick());
         const muse::String text = numericPulseDegreeText(profile, note->pitch());
         const RectF glyphBbox = numericPulseGlyphBbox(text, note->magS(), note->spatium(),
-                                                       numericPulseRegister(profile, note->pitch()));
+                                                       numericPulseRegister(profile, note->pitch()), profile->fontFamily);
         const double noteMarkY = note->pagePos().y() + glyphBbox.top()
                                  - numericPulseRhythmMarkGap(note->spatium());
         closestMarkY = foundNote ? std::min(closestMarkY, noteMarkY) : noteMarkY;
@@ -379,7 +379,6 @@ void BeamLayout::layout2(Beam* item, const LayoutContext& ctx, const std::vector
 
     item->setStartAnchor(BeamTremoloLayout::chordBeamAnchor(item->ldata(), startChord, ChordBeamAnchorType::Start));
     item->setEndAnchor(BeamTremoloLayout::chordBeamAnchor(item->ldata(), endChord, ChordBeamAnchorType::End));
-    const StaffType* staffType = item->staffType();
     const NumericPulseProfile* numericProfile = numericPulseProfile(item->staff(), item->tick());
     const bool useNumericPulse = numericProfile && numericProfile->durationMarksAbove;
 
@@ -425,7 +424,24 @@ void BeamLayout::layout2(Beam* item, const LayoutContext& ctx, const std::vector
     // anchor represents the middle of the beam, not the tip of the stem
     // location depends on _isBesideTabStaff
 
-    if (!item->isBesideTabStaff()) {
+    if (useNumericPulse && !item->cross()) {
+        // Numeric bars have fixed, flat placement relative to the digits. The
+        // Western stem/slant/collision search is both unused and potentially
+        // very expensive with imported Western pitches on numeric guide rows.
+        BeamTremoloLayout::setupLData(item, item->mutldata(), ctx);
+        item->mutldata()->isGrace = startChord->isGrace();
+        item->mutldata()->notePositions = item->notePositions();
+        item->mutldata()->crossStaffBeamPos = BeamBase::CrossStaffBeamPosition::INVALID;
+        item->setBeamWidth(numericPulseRhythmMarkThickness(item->spatium()) * item->mag());
+        item->setBeamDist(numericPulseRhythmMarkDistance(item->spatium()) * item->mag());
+        const double numericY = numericPulseBeamAnchorY(item, startChord);
+        item->setStartAnchor(PointF(BeamTremoloLayout::chordBeamAnchorX(item->ldata(), chordRests.front(),
+                                                                      ChordBeamAnchorType::Start), numericY));
+        item->setEndAnchor(PointF(BeamTremoloLayout::chordBeamAnchorX(item->ldata(), chordRests.back(),
+                                                                    ChordBeamAnchorType::End), numericY));
+        item->mutldata()->setAnchors(item->startAnchor(), item->endAnchor());
+        item->computeAndSetSlope();
+    } else if (!item->isBesideTabStaff()) {
         BeamTremoloLayout::setupLData(item, item->mutldata(), ctx);
         BeamTremoloLayout::calculateAnchors(item, item->mutldata(), ctx, chordRests, item->notePositions());
         item->setStartAnchor(item->ldata()->startAnchor);
@@ -1288,7 +1304,7 @@ void BeamLayout::createBeamSegment(Beam* item, ChordRest* startCr, ChordRest* en
                 const Note* note = toChord(chordRest)->upNote();
                 if (note) {
                     const muse::String text = numericPulseDegreeText(numericProfile, note->pitch());
-                    return numericPulseGroupOverhang(numericPulseTextBbox(text, note->magS()),
+                    return numericPulseGroupOverhang(numericPulseTextBbox(text, note->magS(), numericProfile->fontFamily),
                                                      note->spatium());
                 }
             }
@@ -1415,7 +1431,7 @@ void BeamLayout::createBeamletSegment(Beam* item, const LayoutContext& ctx, Chor
         const Note* note = toChord(cr)->upNote();
         if (note) {
             const muse::String text = numericPulseDegreeText(numericProfile, note->pitch());
-            const double overhang = numericPulseGroupOverhang(numericPulseTextBbox(text, note->magS()),
+            const double overhang = numericPulseGroupOverhang(numericPulseTextBbox(text, note->magS(), numericProfile->fontFamily),
                                                               note->spatium());
             startX = anchorX - overhang;
             endX = anchorX + overhang;

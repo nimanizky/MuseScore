@@ -3331,6 +3331,8 @@ bool TRead::readProperties(Note* n, XmlReader& e, ReadContext& ctx)
         n->setFixed(e.readBool());
     } else if (tag == "fixedLine") {
         n->setFixedLine(e.readInt());
+    } else if (tag == "numericPulseRow") {
+        n->setNumericPulseRow(e.readInt());
     } else if (tag == "headScheme") {
         TRead::readProperty(n, e, ctx, Pid::HEAD_SCHEME);
     } else if (tag == "head") {

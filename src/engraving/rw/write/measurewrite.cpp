@@ -110,6 +110,9 @@ void MeasureWrite::writeMeasure(const Measure* measure, XmlWriter& xml, WriteCon
     if (mstaff->measureRepeatCount()) {
         xml.tag("measureRepeatCount", mstaff->measureRepeatCount());
     }
+    if (mstaff->numericPulseChordNoteLimit()) {
+        xml.tag("numericPulseChordNoteLimit", mstaff->numericPulseChordNoteLimit());
+    }
 
     track_idx_t strack = staff * VOICES;
     track_idx_t etrack = strack + VOICES;

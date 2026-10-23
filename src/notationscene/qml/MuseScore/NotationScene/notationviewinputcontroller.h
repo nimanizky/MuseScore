@@ -208,6 +208,8 @@ private:
     bool isAnchorEditingEvent(QKeyEvent* event) const;
 
     bool tryPercussionShortcut(QKeyEvent* event);
+    bool tryNumericPulseShortcut(QKeyEvent* event, bool dispatch);
+    bool hasNumericPulseKeyboardTarget();
 
     IControlledView* m_view = nullptr;
 

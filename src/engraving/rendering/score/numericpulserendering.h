@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <vector>
 
 #include "draw/fontmetrics.h"
 #include "draw/types/font.h"
@@ -38,30 +39,72 @@ inline double numericPulseStemLength(double spatium, int durationMarks)
 
 inline double numericPulseGroupOverhang(const muse::RectF& textBbox, double spatium)
 {
-    // Beam anchors still originate from the Western notehead attachment point,
-    // which is slightly right-biased for text glyphs such as "5".  Keep enough
-    // overhang for the rhythm mark to visibly pass both edges of every digit.
+    // Bars are anchored at digit centers; extend equally beyond both edges.
     return textBbox.width() * 0.5 + 0.40 * spatium;
 }
 
-inline muse::draw::Font numericPulseFont(double scale)
+inline muse::draw::Font numericPulseFont(double scale, const muse::String& family = {})
 {
     muse::draw::Font font(u"Edwin", muse::draw::Font::Type::Text);
+    if (!family.empty()) {
+        font.setFamily(family, muse::draw::Font::Type::Text);
+    }
     font.setPointSizeF(12.0 * scale);
     return font;
 }
 
-inline muse::RectF numericPulseTextBbox(const muse::String& text, double scale)
+struct NumericPulseTextMetrics {
+    muse::String text;
+    muse::String fontFamily;
+    double scale = 1.0;
+    muse::RectF bbox;
+    double originX = 0.0;
+};
+
+inline std::vector<NumericPulseTextMetrics>& numericPulseTextMetricsCache()
 {
-    const muse::draw::Font font = numericPulseFont(scale);
-    muse::RectF bbox = muse::draw::FontMetrics(font).boundingRect(text);
-    bbox.translate(-bbox.center().x(), 0.0);
-    return bbox;
+    thread_local std::vector<NumericPulseTextMetrics> cache;
+    return cache;
 }
 
-inline double numericPulseTextOriginX(const muse::String& text, double scale)
+inline void clearNumericPulseTextMetricsCache()
 {
-    return -muse::draw::FontMetrics(numericPulseFont(scale)).horizontalAdvance(text) * 0.5;
+    numericPulseTextMetricsCache().clear();
+}
+
+inline NumericPulseTextMetrics numericPulseTextMetrics(const muse::String& text, double scale,
+                                                       const muse::String& fontFamily = {})
+{
+    auto& cache = numericPulseTextMetricsCache();
+    for (const auto& entry : cache) {
+        if (entry.scale == scale && entry.text == text && entry.fontFamily == fontFamily) {
+            return entry;
+        }
+    }
+    const muse::draw::Font font = numericPulseFont(scale, fontFamily);
+    // Anchor octave dots to the visible digit, without the font's leading or
+    // descent padding, so dots remain attached to their number in a chord.
+    muse::RectF bbox = muse::draw::FontMetrics(font).tightBoundingRect(text);
+    bbox.translate(-bbox.center().x(), 0.0);
+    NumericPulseTextMetrics result { text, fontFamily, scale, bbox,
+        -muse::draw::FontMetrics(font).horizontalAdvance(text) * 0.5 };
+    if (cache.size() >= 64) {
+        cache.clear();
+    }
+    cache.push_back(result);
+    return result;
+}
+
+inline muse::RectF numericPulseTextBbox(const muse::String& text, double scale,
+                                        const muse::String& fontFamily = {})
+{
+    return numericPulseTextMetrics(text, scale, fontFamily).bbox;
+}
+
+inline double numericPulseTextOriginX(const muse::String& text, double scale,
+                                      const muse::String& fontFamily = {})
+{
+    return numericPulseTextMetrics(text, scale, fontFamily).originX;
 }
 
 inline muse::RectF numericPulseEmptyPulseBbox(double spatium)
@@ -117,7 +160,7 @@ inline double numericPulseRegisterDotDiameter(double spatium)
 
 inline double numericPulseRegisterDotGap(double spatium)
 {
-    return 0.16 * spatium;
+    return 0.10 * spatium;
 }
 
 inline muse::RectF numericPulseRegisterDotBbox(const muse::RectF& textBbox, double spatium,
@@ -130,11 +173,13 @@ inline muse::RectF numericPulseRegisterDotBbox(const muse::RectF& textBbox, doub
     return muse::RectF(-diameter * 0.5, centerY - diameter * 0.5, diameter, diameter);
 }
 
-inline muse::RectF numericPulseGlyphBbox(const muse::String& text, double scale, double spatium, int registerOffset)
+inline muse::RectF numericPulseGlyphBbox(const muse::String& text, double scale, double spatium, int registerOffset,
+                                         const muse::String& fontFamily = {})
 {
-    muse::RectF bbox = numericPulseTextBbox(text, scale);
+    const muse::RectF textBbox = numericPulseTextBbox(text, scale, fontFamily);
+    muse::RectF bbox = textBbox;
     for (int i = 0; i < std::abs(registerOffset); ++i) {
-        bbox = bbox.united(numericPulseRegisterDotBbox(numericPulseTextBbox(text, scale), spatium, registerOffset, i));
+        bbox = bbox.united(numericPulseRegisterDotBbox(textBbox, spatium, registerOffset, i));
     }
     return bbox;
 }
@@ -153,11 +198,11 @@ inline double numericPulseDurationMarkY(const muse::RectF& textBbox, double spat
 }
 
 inline muse::RectF numericPulseNoteBbox(const muse::String& text, double scale, double spatium,
-                                        int registerOffset, int durationMarks)
+                                        int registerOffset, int durationMarks, const muse::String& fontFamily = {})
 {
-    muse::RectF bbox = numericPulseGlyphBbox(text, scale, spatium, registerOffset);
+    muse::RectF bbox = numericPulseGlyphBbox(text, scale, spatium, registerOffset, fontFamily);
     if (durationMarks > 0) {
-        const muse::RectF textBbox = numericPulseTextBbox(text, scale);
+        const muse::RectF textBbox = numericPulseTextBbox(text, scale, fontFamily);
         const double width = numericPulseDurationMarkWidth(textBbox, spatium);
         const double thickness = numericPulseRhythmMarkThickness(spatium);
         const double top = numericPulseDurationMarkY(bbox, spatium, durationMarks - 1) - thickness * 0.5;

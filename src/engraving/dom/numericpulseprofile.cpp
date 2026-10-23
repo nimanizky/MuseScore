@@ -4,15 +4,21 @@
  */
 #include "numericpulseprofile.h"
 
+#include <algorithm>
 #include <array>
 #include <set>
 #include <string>
 #include <vector>
 
 #include "instrument.h"
+#include "chord.h"
 #include "instrtemplate.h"
+#include "measure.h"
+#include "note.h"
 #include "part.h"
+#include "score.h"
 #include "staff.h"
+#include "stafftype.h"
 #include "rw/xmlreader.h"
 #include "rw/xmlwriter.h"
 
@@ -69,7 +75,8 @@ const std::vector<NumericPulseProfile>& kepatihanProfiles()
 
 bool NumericPulseProfile::isValid() const
 {
-    if (id.empty() || degrees.empty() || minimumRegister > defaultRegister || defaultRegister > maximumRegister) {
+    if (id.empty() || degrees.empty() || minimumRegister > defaultRegister || defaultRegister > maximumRegister
+        || chordNoteLimit < 0 || chordNoteLimit > 9) {
         return false;
     }
 
@@ -103,12 +110,16 @@ void NumericPulseProfile::read(XmlReader& e)
         const AsciiStringView tag(e.name());
         if (tag == "fixedBaseline") {
             fixedBaseline = e.readBool();
+        } else if (tag == "fontFamily") {
+            fontFamily = e.readText();
         } else if (tag == "monophonic") {
             monophonic = e.readBool();
         } else if (tag == "showEmptyPulses") {
             showEmptyPulses = e.readBool();
         } else if (tag == "durationMarksAbove") {
             durationMarksAbove = e.readBool();
+        } else if (tag == "chordNoteLimit") {
+            chordNoteLimit = e.readInt();
         } else if (tag == "minimumRegister") {
             minimumRegister = e.readInt();
         } else if (tag == "maximumRegister") {
@@ -138,9 +149,15 @@ void NumericPulseProfile::write(XmlWriter& xml) const
 
     xml.startElement("numericPulse", { { "id", id } });
     xml.tag("fixedBaseline", fixedBaseline);
+    if (!fontFamily.empty()) {
+        xml.tag("fontFamily", fontFamily);
+    }
     xml.tag("monophonic", monophonic);
     xml.tag("showEmptyPulses", showEmptyPulses);
     xml.tag("durationMarksAbove", durationMarksAbove);
+    if (chordNoteLimit > 0) {
+        xml.tag("chordNoteLimit", chordNoteLimit);
+    }
     xml.tag("minimumRegister", minimumRegister);
     xml.tag("maximumRegister", maximumRegister);
     xml.tag("defaultRegister", defaultRegister);
@@ -228,6 +245,96 @@ const NumericPulseProfile* numericPulseProfileById(const String& id)
 const NumericPulseProfile* numericPulseProfile(const Staff* staff, const Fraction& tick)
 {
     return staff && staff->part() ? numericPulseProfile(staff->part()->instrument(tick)) : nullptr;
+}
+
+int numericPulseDefaultChordNoteLimit(const Staff* staff, const Fraction& tick)
+{
+    if (!staff || !staff->part()) {
+        return 1;
+    }
+
+    const Instrument* instrument = staff->part()->instrument(tick);
+    const NumericPulseProfile* profile = numericPulseProfile(instrument);
+    if (!profile) {
+        return 1;
+    }
+
+    // A conversion can keep the Kepatihan pitch mapping in a profile id while
+    // the instrument template supplies TSI-specific behavior such as its chord
+    // size. Prefer that setting when the instrument itself has a numeric profile.
+    const InstrumentTemplate* instrumentTemplate = instrument ? searchTemplate(instrument->id()) : nullptr;
+    if (instrumentTemplate && !instrumentTemplate->numericPulseProfile.id.empty()) {
+        if (instrumentTemplate->numericPulseProfile.chordNoteLimit > 0) {
+            return instrumentTemplate->numericPulseProfile.chordNoteLimit;
+        }
+        if (!instrumentTemplate->numericPulseProfile.monophonic) {
+            return 9;
+        }
+    }
+
+    if (profile->chordNoteLimit > 0) {
+        return profile->chordNoteLimit;
+    }
+
+    return profile->monophonic ? 1 : 9;
+}
+
+int numericPulseChordNoteLimit(const Staff* staff, const Fraction& tick)
+{
+    if (!numericPulseProfile(staff, tick)) {
+        return 1;
+    }
+
+    const int defaultLimit = numericPulseDefaultChordNoteLimit(staff, tick);
+    Score* score = staff->score();
+    Measure* measure = score ? score->tick2measure(tick) : nullptr;
+    if (!measure) {
+        return defaultLimit;
+    }
+
+    const int overrideLimit = measure->numericPulseChordNoteLimit(staff->idx());
+    return overrideLimit > 0 ? overrideLimit : defaultLimit;
+}
+
+double numericPulseRowDistance(const Staff* staff, const Fraction& tick)
+{
+    const StaffType* staffType = staff->staffType(tick);
+    // Leave room for a number, register dots, and its rhythm marks, as on the
+    // original Gendèr's separate numeric staves.
+    return 4.0 * staffType->lineDistance().val() * staff->spatium(tick);
+}
+
+int numericPulseNoteRow(const Note* note)
+{
+    if (note->numericPulseRow() >= 0) {
+        return note->numericPulseRow();
+    }
+    if (!note->chord()) {
+        return 0;
+    }
+
+    std::vector<Note*> notes = note->chord()->notes();
+    std::stable_sort(notes.begin(), notes.end(), [](const Note* a, const Note* b) { return a->pitch() > b->pitch(); });
+    std::set<int> occupiedRows;
+    for (const Note* n : notes) {
+        if (n->numericPulseRow() >= 0) {
+            occupiedRows.insert(n->numericPulseRow());
+        }
+    }
+    int row = 0;
+    for (const Note* n : notes) {
+        if (n->numericPulseRow() >= 0) {
+            continue;
+        }
+        while (occupiedRows.count(row)) {
+            ++row;
+        }
+        if (n == note) {
+            return row;
+        }
+        occupiedRows.insert(row++);
+    }
+    return 0;
 }
 
 muse::String numericPulseDegreeText(const NumericPulseProfile* profile, int pitch)

@@ -1285,8 +1285,28 @@ void PlaybackController::doAddTrack(const InstrumentTrackId& instrumentTrackId, 
                             && soundFontName == u"Gamelan_Gender_Barung_8_4_Max_Uniformity")
                         || (setupData.id == u"rebab-tuning-8-1-med-diversity"
                             && soundFontName == u"Gamelan_Rebab_8_1_Med_Diversity")
+                        || (setupData.id == u"rebab-tuning-8-2-med-diversity"
+                            && soundFontName == u"Gamelan_Rebab_8_2_Med_Diversity")
+                        || (setupData.id == u"rebab-tuning-8-3-med-diversity"
+                            && soundFontName == u"Gamelan_Rebab_8_3_Med_Diversity")
+                        || (setupData.id == u"rebab-tuning-8-4-med-diversity"
+                            && soundFontName == u"Gamelan_Rebab_8_4_Med_Diversity")
+                        || (setupData.id == u"rebab-tuning-8-1-max-uniformity"
+                            && soundFontName == u"Gamelan_Rebab_8_1_Max_Uniformity")
+                        || (setupData.id == u"rebab-tuning-8-2-max-uniformity"
+                            && soundFontName == u"Gamelan_Rebab_8_2_Max_Uniformity")
+                        || (setupData.id == u"rebab-tuning-8-3-max-uniformity"
+                            && soundFontName == u"Gamelan_Rebab_8_3_Max_Uniformity")
+                        || (setupData.id == u"rebab-tuning-8-4-max-uniformity"
+                            && soundFontName == u"Gamelan_Rebab_8_4_Max_Uniformity")
                         || (setupData.id == u"rebab-tuning-7-1-max-diversity"
-                            && soundFontName == u"Gamelan_Rebab_7_1_Max_Diversity");
+                            && soundFontName == u"Gamelan_Rebab_7_1_Max_Diversity")
+                        || (setupData.id == u"rebab-tuning-7-2-max-diversity"
+                            && soundFontName == u"Gamelan_Rebab_7_2_Max_Diversity")
+                        || (setupData.id == u"rebab-tuning-7-3-max-diversity"
+                            && soundFontName == u"Gamelan_Rebab_7_3_Max_Diversity")
+                        || (setupData.id == u"rebab-tuning-7-4-max-diversity"
+                            && soundFontName == u"Gamelan_Rebab_7_4_Max_Diversity");
                     if (matchesSetup || isBundledGamelan) {
                         audioSettings()->setTrackInputParams(instrumentTrackId, { resource, {} });
                         break;

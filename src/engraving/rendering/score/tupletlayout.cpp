@@ -27,6 +27,8 @@
 #include "dom/factory.h"
 #include "dom/stafftype.h"
 #include "dom/chord.h"
+#include "dom/numericpulseprofile.h"
+#include "numericpulserendering.h"
 #include "dom/note.h"
 #include "dom/stem.h"
 #include "dom/system.h"
@@ -523,6 +525,22 @@ void TupletLayout::layoutBracket(Tuplet* item, const ChordRest* cr1, const Chord
         item->p2().rx() = shEl->translated(cr2->pagePos()).right() + noteRight;
     }
 
+    const bool numericPulse = numericPulseProfile(cr1->staff(), cr1->tick()) != nullptr;
+    if (numericPulse) {
+        const auto digitEdge = [](const ChordRest* cr, bool right) {
+            if (cr->isChord() && toChord(cr)->upNote()) {
+                const Note* note = toChord(cr)->upNote();
+                const auto* profile = numericPulseProfile(note->staff(), note->tick());
+                const RectF bbox = numericPulseTextBbox(numericPulseDegreeText(profile, note->pitch()), note->magS(),
+                                                        profile->fontFamily);
+                return note->pagePos().x() + (right ? bbox.right() : bbox.left());
+            }
+            return cr->pageBoundingRect().center().x();
+        };
+        item->p1().setX(digitEdge(cr1, false) - noteLeft);
+        item->p2().setX(digitEdge(cr2, true) + noteRight);
+    }
+
     PointF mp(item->parentItem()->pagePos());
     if (item->explicitParent()->isMeasure()) {
         System* s = toMeasure(item->explicitParent())->system();
@@ -546,7 +564,7 @@ void TupletLayout::layoutBracket(Tuplet* item, const ChordRest* cr1, const Chord
     item->p1().ry() -= yOffset;
     item->p2().ry() -= yOffset;
 
-    if (style.styleB(Sid::tupletExtendToEndOfDuration)) {
+    if (!numericPulse && style.styleB(Sid::tupletExtendToEndOfDuration)) {
         extendToEndOfDuration(item, toChordRest(cr2));
     }
 
@@ -562,7 +580,9 @@ void TupletLayout::layoutBracket(Tuplet* item, const ChordRest* cr1, const Chord
 
         double yNumber = item->p1().y() + (item->p2().y() - item->p1().y()) * .5 - l1 * (item->isUp() ? 1.0 : -1.0);
 
-        if (placeNumberOnRhythmicCenter(item, cr1, cr2, ctx)) {
+        if (numericPulse) {
+            xNumber = (item->p1().x() + item->p2().x()) * 0.5;
+        } else if (placeNumberOnRhythmicCenter(item, cr1, cr2, ctx)) {
             xNumber = computeRhythmicCenter(item, cr2);
         } else if (cr1->beam() && cr2->beam() && cr1->beam() == cr2->beam() && !item->hasBracket()) {
             // for beamed tuplets, center number on beam - if they don't have a bracket

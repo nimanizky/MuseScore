@@ -575,6 +575,18 @@ void NoteInput::addRest(Transaction& tx, Score* score)
         score->normalizeNumericPulseMeasureRests();
     }
 
+    if (numericPulseDefaultChordNoteLimit(is.staff(), is.tick()) > 1) {
+        is.setSegment(score->tick2segment(is.tick(), false, SegmentType::ChordRest));
+    }
+    if (numericPulseDefaultChordNoteLimit(is.staff(), is.tick()) > 1 && is.cr() && is.cr()->isChord()) {
+        const int row = std::clamp(is.numericPulseRow(), 0, numericPulseChordNoteLimit(is.staff(), is.tick()) - 1);
+        clearNumericPulseRow(score, row);
+        is.setNumericPulseRow(row);
+        is.moveToNextInputPos();
+        is.setRest(false);
+        return;
+    }
+
     score->expandVoice(is.segment(), is.track());
 
     // The numeric-pulse cursor may sit inside a longer rest without having a
@@ -602,6 +614,13 @@ Note* NoteInput::addPitchToChord(Transaction& tx, Score* score, NoteVal& nval, C
 {
     IF_ASSERT_FAILED(chord) {
         return nullptr;
+    }
+
+    if (numericPulseProfile(chord->staff(), chord->tick())) {
+        const int noteLimit = numericPulseChordNoteLimit(chord->staff(), chord->tick());
+        if (chord->findNote(nval.pitch) || int(chord->notes().size()) >= noteLimit) {
+            return nullptr;
+        }
     }
 
     InputState& is = externalInputState ? (*externalInputState) : score->inputState();
@@ -870,6 +889,16 @@ Ret NoteInput::putNote(Transaction& tx, Score* score, const Position& p, bool re
     bool error = false;
     NoteVal nval;
 
+    if (is.rest() && numericPulseDefaultChordNoteLimit(st, s->tick()) > 1 && is.cr() && is.cr()->isChord()) {
+        const int row = std::clamp(p.numericPulseRow >= 0 ? p.numericPulseRow : is.numericPulseRow(),
+                                   0, numericPulseChordNoteLimit(st, s->tick()) - 1);
+        clearNumericPulseRow(score, row);
+        is.setSegment(s);
+        is.setNumericPulseRow(row);
+        is.setRest(false);
+        return muse::make_ok();
+    }
+
     // Numeric-pulse mouse entry chooses the degree from the note-input
     // toolbar, not from the vertical mouse position.  Converting the
     // profile's inputStep through a clef here would turn the profile's
@@ -895,6 +924,21 @@ Ret NoteInput::putNote(Transaction& tx, Score* score, const Position& p, bool re
             return make_ret(Ret::Code::UnknownError);
         }
         nval = noteVal(score, pitch, p.staffIdx, false);
+        if (numericPulseDefaultChordNoteLimit(st, s->tick()) > 1) {
+            const int row = std::clamp(p.numericPulseRow >= 0 ? p.numericPulseRow : is.numericPulseRow(),
+                                       0, numericPulseChordNoteLimit(st, s->tick()) - 1);
+            const bool explicitRegister = is.numericPulseRegisterExplicit();
+            is.setNumericPulseRow(row);
+            Note* note = enterNumericPulseRow(tx, score, nval, row);
+            // Keep a mouse-selected rail and pulse active so the number can be
+            // changed directly with the degree toolbar or keyboard.
+            is.setSegment(note ? note->chord()->segment() : s);
+            is.setNumericPulseRow(row);
+            is.setNotes({ nval });
+            is.setNumericPulseRegisterExplicit(explicitRegister);
+            is.setNumericPulseRegisterOffset(registerOffset);
+            return note ? muse::make_ok() : make_ret(Ret::Code::UnknownError);
+        }
     } else {
         nval = noteValForPosition(score, p, is.accidentalType(), error);
     }
@@ -1336,6 +1380,91 @@ void NoteInput::nextInputPos(Transaction&, Score* score, const ChordRest* cr, bo
 ///   insert note or add note to chord
 //---------------------------------------------------------
 
+void NoteInput::clearNumericPulseRow(Score* score, int row)
+{
+    ChordRest* cr = score->inputState().cr();
+    if (!cr || !cr->isChord()) {
+        return;
+    }
+    std::vector<std::pair<Note*, int> > rows;
+    for (Note* note : toChord(cr)->notes()) {
+        rows.emplace_back(note, numericPulseNoteRow(note));
+    }
+    Note* target = nullptr;
+    for (const auto& [note, assignedRow] : rows) {
+        EditNote::undoChangeNumericPulseRow(score, note, assignedRow);
+        if (assignedRow == row) {
+            target = note;
+        }
+    }
+    if (target) {
+        score->deleteItem(target);
+    }
+}
+
+Note* NoteInput::enterNumericPulseRow(Transaction& tx, Score* score, NoteVal& nval, int row)
+{
+    InputState& is = score->inputState();
+    const TDuration inputDuration = is.duration();
+    // Rest replacement can replace the segment. Resolve the live beat.
+    is.setSegment(score->tick2segment(is.tick(), false, SegmentType::ChordRest));
+    if (row < 0 || row >= numericPulseChordNoteLimit(is.staff(), is.tick())) {
+        return nullptr;
+    }
+
+    ChordRest* cr = is.cr();
+    Chord* chord = cr && cr->isChord() ? toChord(cr) : nullptr;
+    Note* result = nullptr;
+    if (chord) {
+        // Freeze the legacy pitch-ordered assignment before changing a pitch
+        // or adding a note. Existing numbers must stay on their own rails.
+        std::vector<std::pair<Note*, int> > rows;
+        for (Note* note : chord->notes()) {
+            rows.emplace_back(note, numericPulseNoteRow(note));
+        }
+        for (const auto& [note, assignedRow] : rows) {
+            EditNote::undoChangeNumericPulseRow(score, note, assignedRow);
+            if (assignedRow == row) {
+                result = note;
+            }
+        }
+        if (result) {
+            if (nval.tpc1 == Tpc::TPC_INVALID) {
+                nval.tpc1 = pitch2tpc(nval.pitch, chord->staff()->concertKey(chord->tick()), Prefer::NEAREST);
+            }
+            if (nval.tpc2 == Tpc::TPC_INVALID) {
+                Interval interval = chord->staff()->transpose(chord->tick());
+                interval.flip();
+                nval.tpc2 = Transpose::transposeTpc(nval.tpc1, interval, true);
+            }
+            for (Note* tiedNote : result->tiedNotes()) {
+                EditNote::undoChangePitch(score, tiedNote, nval.pitch, nval.tpc1, nval.tpc2);
+            }
+            score->select(result);
+            score->setPlayNote(true);
+            score->setPlayChord(true);
+            is.moveToNextInputPos();
+        } else {
+            if (int(chord->notes().size()) >= numericPulseChordNoteLimit(chord->staff(), chord->tick())) {
+                return nullptr;
+            }
+            result = addNote(tx, score, chord, nval, false, is.articulationIds());
+        }
+    } else {
+        result = addPitch(tx, score, nval, false);
+    }
+    if (result) {
+        for (Note* tiedNote : result->tiedNotes()) {
+            EditNote::undoChangeNumericPulseRow(score, tiedNote, row);
+        }
+    }
+    // Selecting the just-entered number fires InputState::update(), whose
+    // normal selection behavior resets numeric entry to quarter notes. Keep
+    // the duration the composer chose for the next entry instead.
+    is.setDuration(inputDuration);
+    return result;
+}
+
 void NoteInput::addPitch(Transaction& tx, Score* score, const NoteInputParams& params, bool addFlag, bool insert)
 {
     InputState& is = score->inputState();
@@ -1347,7 +1476,26 @@ void NoteInput::addPitch(Transaction& tx, Score* score, const NoteInputParams& p
     is.setRest(false);
 
     if (params.numericDegree != 0) {
-        const NumericPulseProfile* numericProfile = numericPulseProfile(is.staff(), is.tick());
+        Chord* targetChord = nullptr;
+        if (addFlag && numericPulseDefaultChordNoteLimit(is.staff(), is.tick()) > 1) {
+            EngravingItem* selectedElement = score->selection().element();
+            if (selectedElement && selectedElement->isNote()) {
+                targetChord = toNote(selectedElement)->chord();
+            } else if (selectedElement && selectedElement->isChord()) {
+                targetChord = toChord(selectedElement);
+            }
+            if (!targetChord && is.lastSegment()) {
+                ChordRest* lastChordRest = toChordRest(is.lastSegment()->element(is.track()));
+                targetChord = lastChordRest && lastChordRest->isChord() ? toChord(lastChordRest) : nullptr;
+            }
+            if (!targetChord || numericPulseChordNoteLimit(targetChord->staff(), targetChord->tick()) <= 1) {
+                return;
+            }
+        }
+
+        Staff* pitchStaff = targetChord ? targetChord->staff() : is.staff();
+        const Fraction pitchTick = targetChord ? targetChord->tick() : is.tick();
+        const NumericPulseProfile* numericProfile = numericPulseProfile(pitchStaff, pitchTick);
         const NumericPulseDegree* degree = numericProfile ? numericProfile->degreeForNumber(params.numericDegree) : nullptr;
         if (!degree) {
             return;
@@ -1364,9 +1512,35 @@ void NoteInput::addPitch(Transaction& tx, Score* score, const NoteInputParams& p
         if (pitch < 0) {
             return;
         }
-        NoteVal nval = noteVal(score, pitch, is.staffIdx(), false);
+        NoteVal nval = noteVal(score, pitch, pitchStaff->idx(), false);
+        const bool explicitRegister = is.numericPulseRegisterExplicit();
+        if (numericPulseDefaultChordNoteLimit(pitchStaff, pitchTick) > 1) {
+            int row = std::clamp(is.numericPulseRow(), 0, numericPulseChordNoteLimit(pitchStaff, pitchTick) - 1);
+            if (targetChord) {
+                std::set<int> occupiedRows;
+                for (const Note* note : targetChord->notes()) {
+                    occupiedRows.insert(numericPulseNoteRow(note));
+                }
+                row = 0;
+                while (occupiedRows.count(row)) {
+                    ++row;
+                }
+                if (row >= numericPulseChordNoteLimit(pitchStaff, pitchTick)) {
+                    return;
+                }
+                is.setTrack(targetChord->track());
+                is.setSegment(targetChord->segment());
+            }
+            enterNumericPulseRow(tx, score, nval, row);
+            is.setNumericPulseRow(row);
+        } else if (targetChord) {
+            addPitchToChord(tx, score, nval, targetChord);
+        } else {
+            addPitch(tx, score, nval, false);
+        }
         is.setNotes({ nval });
-        addPitch(tx, score, nval, !numericProfile->monophonic && addFlag);
+        is.setNumericPulseRegisterExplicit(explicitRegister);
+        is.setNumericPulseRegisterOffset(registerOffset);
         return;
     }
 
@@ -1523,6 +1697,19 @@ void NoteInput::setDuration(Transaction& tx, Score* score, DurationType duration
 
     is.setDuration(duration);
     is.setDots(0);
+
+    const std::vector<Note*> selectedNotes = score->selection().uniqueNotes();
+    if (score->noteEntryMode() && !selectedNotes.empty()
+        && std::all_of(selectedNotes.begin(), selectedNotes.end(), [](const Note* note) {
+        return numericPulseProfile(note->staff(), note->tick()) != nullptr;
+    })) {
+        // A highlighted Kepatihan number is an existing note, even when the
+        // numeric entry cursor is active. Change its chord's rhythm in place.
+        applyToSelection(score, oldDuration, oldRest, oldAccidentalType, true, false);
+        is.setDuration(duration);
+        is.setDots(0);
+        return;
+    }
 
     //
     // if in "note enter" mode, reset rest flag

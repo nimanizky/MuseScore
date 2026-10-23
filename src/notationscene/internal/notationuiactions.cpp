@@ -20,6 +20,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "notationuiactions.h"
+#include "notationscene/kepatihantranslation.h"
 
 #include <unordered_map>
 
@@ -91,6 +92,12 @@ static const TranslatableString X_TAB = TranslatableString("action", "%1 (TAB)")
 //! Because actions can be dispatched not only shortcuts, but another way, ex by click Button, Menu and etc
 
 const UiActionList NotationUiActions::s_actions = {
+    UiAction("toggle-kepatihan-translation",
+             mu::context::UiCtxProjectOpened,
+             mu::context::CTX_NOTATION_OPENED,
+             TranslatableString("action", "Western pitch translation"),
+             TranslatableString("action", "Show or hide Western pitch translation (T on Kepatihan staves)"),
+             Checkable::Yes),
     UiAction("action://copy",
              { "action://notation/copy" },
              mu::context::UiCtxAny,
@@ -1305,6 +1312,12 @@ const UiActionList NotationUiActions::s_actions = {
              mu::context::CTX_NOTATION_OPENED,
              TranslatableString("action", "Measure properties…"),
              TranslatableString("action", "Measure properties")
+             ),
+    UiAction("set-numeric-pulse-chord-note-limit",
+             mu::context::UiCtxProjectOpened,
+             mu::context::CTX_NOTATION_OPENED,
+             TranslatableString("action", "Set Kepatihan chord size"),
+             TranslatableString("action", "Set Kepatihan chord size")
              ),
     UiAction("measures-per-system",
              mu::context::UiCtxProjectOpened,
@@ -3530,6 +3543,9 @@ NotationUiActions::NotationUiActions(std::shared_ptr<NotationActionController> c
 
 void NotationUiActions::init()
 {
+    KepatihanTranslation::changed().onNotify(this, [this]() {
+        m_actionCheckedChanged.send({ "toggle-kepatihan-translation" });
+    });
     m_controller->noteInputStateChanged().onNotify(this, [this]() {
         m_actionCheckedChanged.send({ NOTE_INPUT_ACTION_CODE });
     });
@@ -3693,6 +3709,9 @@ bool NotationUiActions::isScoreConfigChecked(const ActionCode& code, const Score
 
 bool NotationUiActions::actionChecked(const UiAction& act) const
 {
+    if (act.code == "toggle-kepatihan-translation") {
+        return KepatihanTranslation::enabled();
+    }
     if (act.code == NOTE_INPUT_ACTION_CODE) {
         auto noteInput = m_controller->currentNotationNoteInput();
         if (noteInput) {

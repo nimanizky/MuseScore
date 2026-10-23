@@ -552,13 +552,6 @@ void EditNote::upDown(Score* score, bool up, UpDownMode mode)
 {
     std::vector<Note*> el = score->selection().uniqueNotes();
 
-    if (!up && mode == UpDownMode::NUMERIC_PULSE && el.size() == 1) {
-        if (Rest* rest = replaceFirstNumericPulseDegreeWithRest(score, el.front())) {
-            score->select(rest, SelectType::SINGLE);
-            return;
-        }
-    }
-
     std::sort(el.begin(), el.end(), [up](Note* a, Note* b) {
         if (up) {
             return a->string() < b->string();
@@ -725,20 +718,24 @@ void EditNote::upDown(Score* score, bool up, UpDownMode mode)
                 }
 
                 auto target = current;
+                int targetRegister = numericPulseRegister(profile, pitch);
                 if (up) {
                     ++target;
                     if (target == profile->degrees.cend()) {
-                        break;
+                        target = profile->degrees.cbegin();
+                        ++targetRegister;
                     }
                 } else {
                     if (target == profile->degrees.cbegin()) {
-                        break;
+                        target = profile->degrees.cend();
+                        --targetRegister;
                     }
                     --target;
                 }
 
-                const int registerOffset = pitch - currentDegree->scorePitch;
-                const int targetPitch = target->scorePitch + registerOffset;
+                // Arrow keys traverse the tuning across registers, including
+                // notes imported outside the register-entry menu's bounds.
+                const int targetPitch = target->scorePitch + targetRegister * 12;
                 if (targetPitch < 0 || targetPitch > 127) {
                     break;
                 }
@@ -802,10 +799,39 @@ void EditNote::undoChangePitch(Score* score, Note* note, int pitch, int tpc1, in
 {
     Transaction& tx = score->transactionManager()->currentOrDummyTransaction();
 
+    if (note->numericPulseRow() < 0 && numericPulseDefaultChordNoteLimit(note->staff(), note->tick()) > 1) {
+        std::vector<std::pair<Note*, int> > rows;
+        for (Note* chordNote : note->chord()->notes()) {
+            rows.emplace_back(chordNote, numericPulseNoteRow(chordNote));
+        }
+        for (const auto& [chordNote, row] : rows) {
+            undoChangeNumericPulseRow(score, chordNote, row);
+        }
+    }
+
     for (EngravingObject* e : note->linkList()) {
         Note* n = toNote(e);
         tx.push(new ChangePitch(n, pitch, tpc1, tpc2));
     }
+}
+
+void EditNote::undoChangeNumericPulseRow(Score* score, Note* note, int row)
+{
+    Transaction& tx = score->transactionManager()->currentOrDummyTransaction();
+    for (EngravingObject* e : note->linkList()) {
+        Note* n = toNote(e);
+        if (n->numericPulseRow() != row) {
+            tx.push(new ChangeNumericPulseRow(n, row));
+        }
+    }
+}
+
+void ChangeNumericPulseRow::flip()
+{
+    const int oldRow = note->numericPulseRow();
+    note->setNumericPulseRow(row);
+    row = oldRow;
+    note->triggerLayout();
 }
 
 //---------------------------------------------------------

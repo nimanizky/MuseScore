@@ -409,6 +409,17 @@ void ChangeMeasureRepeatCount::flip()
     count = oldCount;
 }
 
+void ChangeMeasureNumericPulseChordNoteLimit::flip()
+{
+    const int oldLimit = m->numericPulseChordNoteLimit(staffIdx);
+    m->setNumericPulseChordNoteLimit(limit, staffIdx);
+    limit = oldLimit;
+    // Changing the number of guide rows changes the staff's vertical extent.
+    // Relayout every staff in the measure so the system can move the TSIs
+    // below it out of the expanded rows.
+    m->triggerLayout();
+}
+
 void ChangeMMRestNext::flip()
 {
     assert(m_mmrest->isMMRest());

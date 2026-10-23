@@ -21,6 +21,7 @@
  */
 
 #include "notationactioncontroller.h"
+#include "notationscene/kepatihantranslation.h"
 
 #include <QGuiApplication>
 
@@ -30,6 +31,7 @@
 
 #include "engraving/dom/harmony.h"
 #include "engraving/dom/instrument.h"
+#include "engraving/dom/measure.h"
 #include "engraving/dom/masterscore.h"
 #include "engraving/dom/note.h"
 #include "engraving/dom/part.h"
@@ -40,6 +42,7 @@
 #include "engraving/dom/numericpulseprofile.h"
 #include "engraving/dom/stafftype.h"
 #include "engraving/editing/noteinput.h"
+#include "engraving/editing/editmeasures.h"
 
 #include "notation/inotationautomation.h" // IWYU pragma: keep
 #include "notation/inotationelements.h"
@@ -109,6 +112,8 @@ using Interaction = INotationInteraction;
 void NotationActionController::init()
 {
     TRACEFUNC;
+
+    registerAction("toggle-kepatihan-translation", []() { KepatihanTranslation::toggle(); });
 
     // global commands
     registerCommand(CANCEL_COMMAND, &Controller::resetState);
@@ -397,6 +402,7 @@ void NotationActionController::init()
     registerAction("measures-per-system", &Controller::openBreaksDialog);
     registerAction("transpose", &Controller::openTransposeDialog);
     registerAction("convert-to-gamelan", &Controller::convertToGamelan);
+    registerAction("set-numeric-pulse-chord-note-limit", &Controller::setNumericPulseChordNoteLimit);
     struct KepatihanTuningOption {
         const char* suffix;
         const char* profileId;
@@ -1066,6 +1072,22 @@ void NotationActionController::toggleNoteInput(NoteInputMethod method)
     INotationNoteInputPtr noteInput = currentNotationNoteInput();
     if (!noteInput) {
         return;
+    }
+
+    if (method == NoteInputMethod::UNKNOWN) {
+        const engraving::NumericPulseProfile* inputProfile
+            = engraving::numericPulseProfile(noteInput->state().staff(), noteInput->state().tick());
+        const engraving::EngravingItem* selected = selectedElement();
+        const engraving::NumericPulseProfile* selectedProfile
+            = selected ? engraving::numericPulseProfile(selected->staff(), selected->tick()) : nullptr;
+        if (inputProfile || selectedProfile) {
+            if (noteInput->isNoteInputMode()) {
+                noteInput->endNoteInput();
+            } else {
+                noteInput->startNoteInput(NoteInputMethod::BY_NOTE_NAME);
+            }
+            return;
+        }
     }
 
     if (method == NoteInputMethod::UNKNOWN) {
@@ -1779,6 +1801,13 @@ muse::Ret NotationActionController::moveWithRet(MoveDirection direction, bool qu
     }
 
     const EngravingItem* selectedElement = interaction->selection()->element();
+    // A list or range selection has no single element. Use a selected note
+    // to choose the pitch mode; movePitch still operates on the full selection.
+    const auto selectedNotes = interaction->selection()->notes();
+    if (!selectedElement && !selectedNotes.empty()
+        && engraving::numericPulseProfile(selectedNotes.front()->staff(), selectedNotes.front()->tick())) {
+        selectedElement = selectedNotes.front();
+    }
     INotationNoteInputPtr noteInput = interaction->noteInput();
     bool playChord = false;
     bool usesNumericPulse = false;
@@ -2535,8 +2564,38 @@ void NotationActionController::convertToKepatihan(const muse::String& profileId,
                    && profileId == u"kepatihan-tuning-8-1-med-diversity") {
             targetInstrumentId = u"rebab-tuning-8-1-med-diversity";
         } else if (instrumentName == u"Rebab"
+                   && profileId == u"kepatihan-tuning-8-2-med-diversity") {
+            targetInstrumentId = u"rebab-tuning-8-2-med-diversity";
+        } else if (instrumentName == u"Rebab"
+                   && profileId == u"kepatihan-tuning-8-3-med-diversity") {
+            targetInstrumentId = u"rebab-tuning-8-3-med-diversity";
+        } else if (instrumentName == u"Rebab"
+                   && profileId == u"kepatihan-tuning-8-4-med-diversity") {
+            targetInstrumentId = u"rebab-tuning-8-4-med-diversity";
+        } else if (instrumentName == u"Rebab"
+                   && profileId == u"kepatihan-tuning-8-1-max-uniformity") {
+            targetInstrumentId = u"rebab-tuning-8-1-max-uniformity";
+        } else if (instrumentName == u"Rebab"
+                   && profileId == u"kepatihan-tuning-8-2-max-uniformity") {
+            targetInstrumentId = u"rebab-tuning-8-2-max-uniformity";
+        } else if (instrumentName == u"Rebab"
+                   && profileId == u"kepatihan-tuning-8-3-max-uniformity") {
+            targetInstrumentId = u"rebab-tuning-8-3-max-uniformity";
+        } else if (instrumentName == u"Rebab"
+                   && profileId == u"kepatihan-tuning-8-4-max-uniformity") {
+            targetInstrumentId = u"rebab-tuning-8-4-max-uniformity";
+        } else if (instrumentName == u"Rebab"
                    && profileId == u"kepatihan-tuning-7-1-max-diversity") {
             targetInstrumentId = u"rebab-tuning-7-1-max-diversity";
+        } else if (instrumentName == u"Rebab"
+                   && profileId == u"kepatihan-tuning-7-2-max-diversity") {
+            targetInstrumentId = u"rebab-tuning-7-2-max-diversity";
+        } else if (instrumentName == u"Rebab"
+                   && profileId == u"kepatihan-tuning-7-3-max-diversity") {
+            targetInstrumentId = u"rebab-tuning-7-3-max-diversity";
+        } else if (instrumentName == u"Rebab"
+                   && profileId == u"kepatihan-tuning-7-4-max-diversity") {
+            targetInstrumentId = u"rebab-tuning-7-4-max-diversity";
         }
         if (!targetInstrumentId.isEmpty()) {
             const engraving::InstrumentTemplate& targetTemplate = instrumentsRepository()->instrumentTemplate(targetInstrumentId);
@@ -2561,6 +2620,55 @@ void NotationActionController::convertToKepatihan(const muse::String& profileId,
         key.tick = engraving::Part::MAIN_INSTRUMENT_TICK;
         parts->replaceInstrument(key, convertedInstrument, targetStaffType);
     }
+}
+
+void NotationActionController::setNumericPulseChordNoteLimit(const ActionData& args)
+{
+    const int requestedLimit = args.arg<int>(0);
+    if (requestedLimit != 0 && (requestedLimit < 3 || requestedLimit > 9)) {
+        return;
+    }
+
+    const INotationInteractionPtr interaction = currentNotationInteraction();
+    engraving::Score* score = currentNotationScore();
+    const INotationUndoStackPtr undoStack = currentNotationUndoStack();
+    if (!interaction || !score || !undoStack) {
+        return;
+    }
+
+    const INotationInteraction::HitElementContext& hit = interaction->hitElementContext();
+    if (!hit.element || !hit.element->isMeasure() || !hit.staff) {
+        return;
+    }
+
+    engraving::Measure* measure = engraving::toMeasure(hit.element);
+    const engraving::staff_idx_t staffIdx = hit.staff->idx();
+    if (engraving::numericPulseDefaultChordNoteLimit(hit.staff, measure->tick()) < 2
+        || measure->numericPulseChordNoteLimit(staffIdx) == requestedLimit) {
+        return;
+    }
+
+    const int effectiveLimit = requestedLimit > 0 ? requestedLimit
+                                                 : engraving::numericPulseDefaultChordNoteLimit(hit.staff, measure->tick());
+    for (const engraving::Segment& segment : measure->segments()) {
+        if (!segment.isChordRestType()) {
+            continue;
+        }
+        const engraving::ChordRest* cr = segment.cr(staffIdx * engraving::VOICES);
+        if (!cr || !cr->isChord()) {
+            continue;
+        }
+        for (const engraving::Note* note : engraving::toChord(cr)->notes()) {
+            if (engraving::numericPulseNoteRow(note) >= effectiveLimit) {
+                interactive()->error(muse::trc("notation", "Cannot remove occupied Kepatihan lines"),
+                                     muse::trc("notation", "Move or delete the notes on the extra lines before reducing the number of lines."));
+                return;
+            }
+        }
+    }
+    undoStack->prepareChanges(TranslatableString("undoableAction", "Set Kepatihan lines"));
+    score->undo(new engraving::ChangeMeasureNumericPulseChordNoteLimit(measure, requestedLimit, staffIdx));
+    undoStack->commitChanges();
 }
 
 void NotationActionController::openPartsDialog()

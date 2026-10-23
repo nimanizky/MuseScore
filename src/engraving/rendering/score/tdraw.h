@@ -21,7 +21,7 @@
  */
 #pragma once
 
-#include "dom/engravingitem.h"
+#include "engraving/dom/engravingitem.h"
 
 namespace mu::engraving {
 class Accidental;

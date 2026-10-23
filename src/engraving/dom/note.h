@@ -244,6 +244,11 @@ public:
     int line() const;
     void setLine(int n) { m_line = n; }
 
+    // A Kepatihan row is independent of pitch. -1 denotes an older note whose
+    // row is assigned automatically until the chord is first edited.
+    int numericPulseRow() const { return m_numericPulseRow; }
+    void setNumericPulseRow(int row) { m_numericPulseRow = row >= 0 && row < 9 ? row : -1; }
+
     int fret() const { return m_fret; }
     void setFret(int val) { m_fret = val; }
     float harmonicFret() const { return m_harmonicFret; }
@@ -506,6 +511,7 @@ private:
     bool m_play = true;           // note is not played if false
     mutable bool m_mark = false;  // for use in sequencer
     bool m_fixed = false;         // for slash notation
+    int m_numericPulseRow = -1;
 
     bool m_overrideBendVisibilityRules = false;
 

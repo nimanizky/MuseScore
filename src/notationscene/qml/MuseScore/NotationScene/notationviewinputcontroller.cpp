@@ -39,9 +39,9 @@
 #include "engraving/dom/fret.h"
 #include "engraving/dom/harmony.h"
 #include "engraving/dom/mscore.h"
+#include "engraving/dom/numericpulseprofile.h"
 #include "engraving/dom/shadownote.h"
 #include "engraving/dom/staff.h"
-#include "engraving/dom/numericpulseprofile.h"
 
 #include "notation/inotationelements.h" // IWYU pragma: keep
 #include "notation/inotationnoteinput.h"
@@ -1025,6 +1025,52 @@ void NotationViewInputController::updateTextCursorPosition()
     }
 }
 
+bool NotationViewInputController::hasNumericPulseKeyboardTarget()
+{
+    const EngravingItem* selected = viewInteraction()->selection()->element();
+    if (selected && numericPulseProfile(selected->staff(), selected->tick())) {
+        return true;
+    }
+    for (const Note* note : viewInteraction()->selection()->notes()) {
+        if (numericPulseProfile(note->staff(), note->tick())) {
+            return true;
+        }
+    }
+
+    const INotationNoteInputPtr noteInput = viewInteraction()->noteInput();
+    return noteInput && noteInput->isNoteInputMode()
+           && numericPulseProfile(noteInput->state().staff(), noteInput->state().tick());
+}
+
+bool NotationViewInputController::tryNumericPulseShortcut(QKeyEvent* event, bool dispatch)
+{
+    if (m_readonly || event->key() < Qt::Key_1 || event->key() > Qt::Key_9
+        || (event->modifiers() & ~Qt::KeypadModifier) != Qt::NoModifier) {
+        return false;
+    }
+
+    const EngravingItem* selected = viewInteraction()->selection()->element();
+    const NumericPulseProfile* profile = selected ? numericPulseProfile(selected->staff(), selected->tick()) : nullptr;
+    INotationNoteInputPtr noteInput = viewInteraction()->noteInput();
+    if (!profile && noteInput && noteInput->isNoteInputMode()) {
+        profile = numericPulseProfile(noteInput->state().staff(), noteInput->state().tick());
+    }
+    if (!profile) {
+        return false;
+    }
+
+    const NumericPulseDegree* degree = profile->degreeForNumber(event->key() - Qt::Key_0);
+    if (dispatch && degree) {
+        NoteInputParams params;
+        params.numericDegree = degree->number;
+        dispatcher()->dispatch("note-action", ActionData::make_arg2<NoteInputParams, NoteAddingMode>(params, NoteAddingMode::NextChord));
+    }
+    // Reserve digits here, including unavailable degrees, so they cannot
+    // accidentally trigger the Western duration shortcuts. Dispatch only in
+    // KeyPress: Qt may send ShortcutOverride more than once for one key press.
+    return true;
+}
+
 bool NotationViewInputController::tryPercussionShortcut(QKeyEvent* event)
 {
     INotationNoteInputPtr noteInput = viewInteraction()->noteInput();
@@ -1475,7 +1521,21 @@ bool NotationViewInputController::shortcutOverrideEvent(QKeyEvent* event)
         return true;
     }
 
-    return tryPercussionShortcut(event);
+    const bool noModifiers = event->modifiers() == Qt::NoModifier;
+    // Qt maps the macOS Command key to ControlModifier.
+    if (!m_readonly && (event->modifiers() & ~Qt::KeypadModifier) == Qt::ControlModifier
+        && (key == Qt::Key_Up || key == Qt::Key_Down) && hasNumericPulseKeyboardTarget()) {
+        return true;
+    }
+    if (noModifiers && hasNumericPulseKeyboardTarget()
+        && (key == Qt::Key_T || key == Qt::Key_N || key == Qt::Key_Up || key == Qt::Key_Down)) {
+        // The general shortcut contexts can suppress these keys while a
+        // numeric note-input cursor is active. Handle the Kepatihan versions
+        // explicitly so N still toggles entry and arrows still change pitch.
+        return true;
+    }
+
+    return tryNumericPulseShortcut(event, false) || tryPercussionShortcut(event);
 }
 
 void NotationViewInputController::keyPressEvent(QKeyEvent* event)
@@ -1502,6 +1562,22 @@ void NotationViewInputController::keyPressEvent(QKeyEvent* event)
         return;
     } else if (isAnchorEditingEvent(event)) {
         viewInteraction()->moveElementAnchors(event);
+    } else if (!m_readonly && (event->modifiers() & ~Qt::KeypadModifier) == Qt::ControlModifier
+               && (key == Qt::Key_Up || key == Qt::Key_Down) && hasNumericPulseKeyboardTarget()) {
+        viewInteraction()->movePitch(key == Qt::Key_Up ? MoveDirection::Up : MoveDirection::Down, PitchMode::OCTAVE);
+        event->accept();
+    } else if (event->modifiers() == Qt::NoModifier && hasNumericPulseKeyboardTarget() && key == Qt::Key_T) {
+        dispatcher()->dispatch("toggle-kepatihan-translation");
+        event->accept();
+    } else if (event->modifiers() == Qt::NoModifier && hasNumericPulseKeyboardTarget() && key == Qt::Key_N) {
+        dispatcher()->dispatch("command://notation/toggle-note-input");
+        event->accept();
+    } else if (event->modifiers() == Qt::NoModifier && hasNumericPulseKeyboardTarget()
+               && (key == Qt::Key_Up || key == Qt::Key_Down)) {
+        dispatcher()->dispatch(key == Qt::Key_Up ? "command://notation/pitch-up" : "command://notation/pitch-down");
+        event->accept();
+    } else if (tryNumericPulseShortcut(event, true)) {
+        event->accept();
     }
 
     updateShadowNotePopupVisibility(/*forceHide*/ true);

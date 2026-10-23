@@ -126,6 +126,7 @@ MStaff::MStaff(const MStaff& m)
     m_corrupted = m.m_corrupted;
 #endif
     m_measureRepeatCount = 0;
+    m_numericPulseChordNoteLimit = m.m_numericPulseChordNoteLimit;
 }
 
 //---------------------------------------------------------
@@ -3043,6 +3044,24 @@ int Measure::measureRepeatCount(staff_idx_t staffIdx) const
     }
 
     return m_mstaves[staffIdx]->measureRepeatCount();
+}
+
+int Measure::numericPulseChordNoteLimit(staff_idx_t staffIdx) const
+{
+    if (staffIdx >= m_mstaves.size()) {
+        return 0;
+    }
+
+    return m_mstaves[staffIdx]->numericPulseChordNoteLimit();
+}
+
+void Measure::setNumericPulseChordNoteLimit(int n, staff_idx_t staffIdx)
+{
+    if (staffIdx >= m_mstaves.size()) {
+        return;
+    }
+
+    m_mstaves[staffIdx]->setNumericPulseChordNoteLimit(n);
 }
 
 bool Measure::containsMeasureRepeat(const staff_idx_t staffIdxFrom, const staff_idx_t staffIdxTo) const

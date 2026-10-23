@@ -149,15 +149,23 @@ Item {
                                                          && item.section.startsWith("numeric-")
                                                          && (item.section === "numeric-degree"
                                                              || item.section === "numeric-register"
+                                                             || item.section === "numeric-translation"
                                                              || numericPulseLabels[item.id] !== undefined)
+            readonly property bool isNumericPulseDegree: useNumericPulseLabel
+                                                         && item.section === "numeric-degree"
             readonly property string numericPulseLabel: item
                                                          && (item.section === "numeric-degree"
-                                                             || item.section === "numeric-register")
+                                                             || item.section === "numeric-register"
+                                                             || item.section === "numeric-translation")
                                                          ? item.title
                                                          : numericPulseLabels[item.id] || ""
 
             width: gridView.cellWidth
             height: gridView.cellWidth
+
+            textFont: isNumericPulseDegree && noteInputModel.numericPulseFontFamily.length > 0
+                      ? Qt.font({ family: noteInputModel.numericPulseFontFamily, pixelSize: 22 })
+                      : ui.theme.bodyFont
 
             enabled: noteInputModel.isInputAllowed
 
@@ -168,12 +176,16 @@ Item {
             text: useNumericPulseLabel ? numericPulseLabel : ""
             iconFont: ui.theme.toolbarIconsFont
 
-            toolTipTitle: Boolean(item) ? item.title : ""
-            toolTipDescription: Boolean(item) ? item.description : ""
+            toolTipTitle: Boolean(item) && isNumericPulseDegree && Boolean(item.description)
+                          ? item.description : Boolean(item) ? item.title : ""
+            toolTipDescription: Boolean(item) && isNumericPulseDegree && Boolean(item.description)
+                                ? "" : Boolean(item) ? item.description : ""
             toolTipShortcut: Boolean(item) ? item.shortcuts : ""
 
             navigation.panel: root.navigationPanel
             navigation.name: Boolean(item) ? item.id : ""
+            navigation.accessible.name: Boolean(item) && isNumericPulseDegree && Boolean(item.description)
+                                        ? item.description : Boolean(item) ? item.title : ""
             navigation.order: Boolean(itemModel) ? itemModel.order : 0
             isClickOnKeyNavTriggered: false
             navigation.onTriggered: {

@@ -29,6 +29,8 @@
 #include "engraving/dom/fret.h"
 #include "engraving/dom/gradualtempochange.h"
 #include "engraving/dom/harmony.h"
+#include "engraving/dom/measure.h"
+#include "engraving/dom/numericpulseprofile.h"
 #include "engraving/dom/part.h"
 #include "engraving/dom/staff.h"
 
@@ -144,6 +146,37 @@ MenuItemList NotationContextMenuModel::makeMeasureItems()
     }
     items << makeMenuItem("make-into-system", TranslatableString("notation", "Create system from selection"));
     items << makeSeparator();
+
+    const INotationInteraction::HitElementContext& context = hitElementContext();
+    if (context.element && context.element->isMeasure() && context.staff) {
+        const engraving::Measure* measure = engraving::toMeasure(context.element);
+        const int defaultLimit = engraving::numericPulseDefaultChordNoteLimit(context.staff, measure->tick());
+        if (defaultLimit > 1) {
+            MenuItemList chordLimitItems;
+            MenuItem* defaultItem = makeMenuItem("set-numeric-pulse-chord-note-limit",
+                                                 TranslatableString("notation", "Default (2)"));
+            defaultItem->setId("numeric-pulse-chord-limit-default");
+            defaultItem->setArgs(ActionData::make_arg1<int>(0));
+            defaultItem->setCheckable(true);
+            defaultItem->setChecked(measure->numericPulseChordNoteLimit(context.staff->idx()) == 0);
+            chordLimitItems << defaultItem;
+
+            for (int limit = 3; limit <= 9; ++limit) {
+                MenuItem* limitItem = makeMenuItem("set-numeric-pulse-chord-note-limit",
+                                                   TranslatableString("notation", "%1 lines").arg(limit));
+                limitItem->setId(QString("numeric-pulse-chord-limit-%1").arg(limit));
+                limitItem->setArgs(ActionData::make_arg1<int>(limit));
+                limitItem->setCheckable(true);
+                limitItem->setChecked(measure->numericPulseChordNoteLimit(context.staff->idx()) == limit);
+                chordLimitItems << limitItem;
+            }
+
+            items << makeMenu(TranslatableString("notation", "N-Multiple Lines"), chordLimitItems,
+                              "numeric-pulse-multiple-lines");
+            items << makeSeparator();
+        }
+    }
+
     items << makeMenuItem("measure-properties");
 
     return items;

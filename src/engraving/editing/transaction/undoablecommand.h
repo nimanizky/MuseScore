@@ -71,6 +71,7 @@ enum class CommandType : signed char {
     ChangeMeasureLen,
     ChangeMMRest,
     ChangeMeasureRepeatCount,
+    ChangeMeasureNumericPulseChordNoteLimit,
 
     // Elements
     AddElement,

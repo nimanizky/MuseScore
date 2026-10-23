@@ -22,6 +22,7 @@
 #include <cfloat>
 
 #include "measurelayout.h"
+#include "dom/numericpulseprofile.h"
 
 #include "dom/ambitus.h"
 #include "dom/barline.h"
@@ -2315,6 +2316,10 @@ void MeasureLayout::layoutPartialWidth(StaffLines* lines, LayoutContext& ctx, do
         const StaffType* st = s->staffType(lines->measure()->tick());
         dist         *= st->lineDistance().val();
         _lines        = st->lines();
+        if (numericPulseDefaultChordNoteLimit(s, lines->measure()->tick()) > 1) {
+            _lines = numericPulseChordNoteLimit(s, lines->measure()->tick());
+            dist = numericPulseRowDistance(s, lines->measure()->tick());
+        }
         lines->mutldata()->setPosY(lines->staffOffsetY());
     } else {
         _lines = 5;

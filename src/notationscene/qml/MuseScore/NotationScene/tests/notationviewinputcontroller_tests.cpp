@@ -20,6 +20,10 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include <gmock/gmock.h>
+#include <set>
+#include <QImage>
+#include <QPainter>
+#include "notationscene/kepatihantranslation.h"
 
 #include "mocks/controlledviewmock.h"
 #include "notation/tests/mocks/notationconfigurationmock.h"
@@ -29,8 +33,60 @@
 #include "playback/tests/mocks/playbackcontrollermock.h"
 
 #include "engraving/tests/utils/scorerw.h"
+#include "engraving/dom/instrument.h"
+#include "engraving/dom/part.h"
+#include "engraving/dom/staff.h"
+#include "actions/tests/mocks/actionsdispatchermock.h"
 
 #include "notationscene/qml/MuseScore/NotationScene/notationviewinputcontroller.h"
+#include "notationscene/qml/MuseScore/NotationScene/kepatihanpitchtargets.h"
+#include "notationscene/qml/MuseScore/NotationScene/kepatihangenderreference.h"
+#include "notationscene/qml/MuseScore/NotationScene/notationpaintview.h"
+
+TEST(KepatihanPitchPreview, TargetDataIsUnambiguousAndNormalized)
+{
+    std::set<std::pair<std::string, int> > keys;
+    for (const auto& target : mu::notation::KEPATIHAN_PITCH_TARGETS) {
+        EXPECT_TRUE(keys.emplace(target.instrument, target.key).second);
+        EXPECT_GE(target.pitch, 0);
+        EXPECT_LE(target.pitch, 127);
+        EXPECT_GE(target.cents, -50);
+        EXPECT_LE(target.cents, 50);
+    }
+}
+
+TEST(KepatihanPitchPreview, UsesTargetDeviationNotSampleTransposition)
+{
+    // F3 is 40 cents sharp; -660c in the low sample filename is a processing
+    // shift from C3, not the deviation to display next to the Western note.
+    bool found = false;
+    for (const auto& target : mu::notation::KEPATIHAN_PITCH_TARGETS) {
+        if (std::string(target.instrument) == "rebab-tuning-7-1-max-diversity" && target.key == 53) {
+            EXPECT_EQ(target.pitch, 53);
+            EXPECT_EQ(target.cents, 40);
+            found = true;
+        }
+    }
+    EXPECT_TRUE(found);
+}
+
+TEST(KepatihanPitchPreview, PdfReferencesCoverAllGenderTuningsWithoutInventingMissingValues)
+{
+    std::set<std::string> instruments;
+    std::set<std::tuple<std::string, int, int> > keys;
+    for (const auto& reference : mu::notation::KEPATIHAN_GENDER_REFERENCES) {
+        instruments.emplace(reference.instrument);
+        EXPECT_TRUE(keys.emplace(reference.instrument, reference.degree, reference.registerOffset).second);
+        EXPECT_GE(reference.pitch, 0);
+        EXPECT_LE(reference.pitch, 127);
+    }
+    EXPECT_EQ(instruments.size(), 12);
+    EXPECT_EQ(keys.size(), 165);
+    using mu::notation::kepatihanGenderReference;
+    EXPECT_EQ(kepatihanGenderReference("gender-barung-tuning-8-1-max-uniformity", 2, -1), nullptr);
+    EXPECT_EQ(kepatihanGenderReference("gender-barung-tuning-8-1-max-uniformity", 6, 0), nullptr);
+    EXPECT_EQ(kepatihanGenderReference("gender-barung-tuning-8-3-max-uniformity", 5, 0), nullptr);
+}
 
 using ::testing::_;
 using ::testing::NiceMock;
@@ -195,6 +251,185 @@ public:
 #endif
     }
 };
+
+TEST_F(NotationViewInputControllerTests, KepatihanDigitsOverrideRhythmShortcutsAndDispatchOnce)
+{
+    engraving::MasterScore* score = engraving::ScoreRW::readScore(TEST_SCORE_PATH);
+    ASSERT_NE(score, nullptr);
+    score->staff(0)->part()->instrument()->setId(u"rebab-tuning-8-4-max-uniformity");
+    auto selected = hitContext(score, { ElementType::NOTE, false }).element;
+    ON_CALL(*m_selection, element()).WillByDefault(Return(selected));
+    auto dispatcher = std::make_shared<NiceMock<actions::ActionsDispatcherMock>>();
+    m_controller->dispatcher.set(dispatcher);
+    QKeyEvent translationOverride(QEvent::ShortcutOverride, Qt::Key_T, Qt::NoModifier);
+    EXPECT_TRUE(m_controller->shortcutOverrideEvent(&translationOverride));
+    EXPECT_CALL(*dispatcher, dispatch(actions::ActionCode("toggle-kepatihan-translation"))).Times(1);
+    QKeyEvent translationPress(QEvent::KeyPress, Qt::Key_T, Qt::NoModifier);
+    m_controller->keyPressEvent(&translationPress);
+    EXPECT_TRUE(translationPress.isAccepted());
+    ::testing::Mock::VerifyAndClearExpectations(dispatcher.get());
+    // Batch selections have notes but no single selected element.
+    ON_CALL(*m_selection, element()).WillByDefault(Return(nullptr));
+    ON_CALL(*m_selection, notes(_)).WillByDefault(Return(std::vector<Note*> { toNote(selected) }));
+    for (auto modifiers : { Qt::ControlModifier | Qt::NoModifier, Qt::ControlModifier | Qt::KeypadModifier }) {
+        for (int key : { Qt::Key_Up, Qt::Key_Down }) {
+            QKeyEvent shiftOverride(QEvent::ShortcutOverride, key, Qt::ShiftModifier);
+            EXPECT_FALSE(m_controller->shortcutOverrideEvent(&shiftOverride));
+            QKeyEvent octaveOverride(QEvent::ShortcutOverride, key, modifiers);
+            EXPECT_TRUE(m_controller->shortcutOverrideEvent(&octaveOverride));
+            EXPECT_CALL(*m_interaction, movePitch(key == Qt::Key_Up ? MoveDirection::Up : MoveDirection::Down,
+                                                PitchMode::OCTAVE)).Times(1);
+            QKeyEvent octavePress(QEvent::KeyPress, key, modifiers);
+            m_controller->keyPressEvent(&octavePress);
+            EXPECT_TRUE(octavePress.isAccepted());
+            ::testing::Mock::VerifyAndClearExpectations(m_interaction.get());
+        }
+    }
+    ON_CALL(*m_selection, element()).WillByDefault(Return(selected));
+    for (int degree = 1; degree <= 6; ++degree) {
+        QKeyEvent overrideEvent(QEvent::ShortcutOverride, Qt::Key_0 + degree, Qt::NoModifier);
+        EXPECT_CALL(*dispatcher, dispatch(_, ::testing::A<const actions::ActionData&>())).Times(0);
+        EXPECT_TRUE(m_controller->shortcutOverrideEvent(&overrideEvent));
+        EXPECT_TRUE(m_controller->shortcutOverrideEvent(&overrideEvent));
+        ::testing::Mock::VerifyAndClearExpectations(dispatcher.get());
+        EXPECT_CALL(*dispatcher, dispatch(actions::ActionCode("note-action"), ::testing::A<const actions::ActionData&>()))
+        .WillOnce([degree](const actions::ActionCode&, const actions::ActionData& data) {
+            EXPECT_EQ(data.arg<NoteInputParams>(0).numericDegree, degree);
+            EXPECT_EQ(data.arg<NoteAddingMode>(1), NoteAddingMode::NextChord);
+        });
+        QKeyEvent pressEvent(QEvent::KeyPress, Qt::Key_0 + degree, Qt::NoModifier);
+        m_controller->keyPressEvent(&pressEvent);
+        EXPECT_TRUE(pressEvent.isAccepted());
+        ::testing::Mock::VerifyAndClearExpectations(dispatcher.get());
+    }
+    EXPECT_CALL(*dispatcher, dispatch(_, ::testing::A<const actions::ActionData&>())).Times(0);
+    QKeyEvent unsupported(QEvent::ShortcutOverride, Qt::Key_7, Qt::NoModifier);
+    EXPECT_TRUE(m_controller->shortcutOverrideEvent(&unsupported));
+    QKeyEvent modified(QEvent::ShortcutOverride, Qt::Key_1, Qt::ControlModifier);
+    EXPECT_FALSE(m_controller->shortcutOverrideEvent(&modified));
+    QKeyEvent keypad(QEvent::ShortcutOverride, Qt::Key_1, Qt::KeypadModifier);
+    EXPECT_TRUE(m_controller->shortcutOverrideEvent(&keypad));
+    score->staff(0)->part()->instrument()->setId(u"piano");
+    EXPECT_FALSE(m_controller->shortcutOverrideEvent(&translationOverride));
+    QKeyEvent western(QEvent::ShortcutOverride, Qt::Key_1, Qt::NoModifier);
+    EXPECT_FALSE(m_controller->shortcutOverrideEvent(&western));
+    delete score;
+}
+
+namespace mu::notation {
+class KepatihanPitchPreviewTests : public ::NotationViewInputControllerTests
+{
+protected:
+    class View : public NotationPaintView {
+    public:
+        INotationInteractionPtr interaction;
+        bool entering = false;
+        INotationInteractionPtr notationInteraction() const override { return interaction; }
+        bool isNoteEnterMode() const override { return entering; }
+    };
+    void refresh(View& view) { view.updatePitchPreview(); }
+    size_t count(const View& view) { return view.m_pitchPreviewNotes.size(); }
+    int previewPitch(const View& view) { return view.m_pitchPreviewNotes.front().pitch; }
+    double previewCents(const View& view) { return view.m_pitchPreviewNotes.front().cents; }
+    void paintPreview(View& view, QPainter* painter)
+    {
+        view.m_pitchPreviewPosition = QPointF(100, 100);
+        view.paintPitchPreview(painter);
+    }
+};
+
+TEST_F(KepatihanPitchPreviewTests, HighlightedNoteShowsInBothInputModesAndIgnoresPageClip)
+{
+    std::unique_ptr<engraving::MasterScore> score(engraving::ScoreRW::readScore(TEST_SCORE_PATH));
+    ASSERT_NE(score, nullptr);
+    score->staff(0)->part()->instrument()->setId(u"rebab-tuning-7-1-max-diversity");
+    auto* note = engraving::toNote(hitContext(score.get(), { ElementType::NOTE, false }).element);
+    std::vector<engraving::Note*> selectedNotes { note };
+    ON_CALL(*m_selection, notes(_)).WillByDefault(Return(selectedNotes));
+    ON_CALL(*m_selection, isRange()).WillByDefault(Return(false));
+    // Selection preview must not depend on hover hit-testing or entry state.
+    EXPECT_CALL(*m_interaction, hitElements(_, _)).Times(0);
+    EXPECT_CALL(*m_interaction, noteInput()).Times(0);
+    View view;
+    view.interaction = m_interaction;
+    view.setWidth(1000);
+    view.setHeight(700);
+    for (bool entering : { false, true }) {
+        view.entering = entering;
+        refresh(view);
+        ASSERT_EQ(count(view), 1);
+        KepatihanTranslation::toggle();
+        refresh(view);
+        EXPECT_EQ(count(view), 0);
+        KepatihanTranslation::toggle();
+        refresh(view);
+        ASSERT_EQ(count(view), 1);
+        QImage image(1000, 700, QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::transparent);
+        QPainter painter(&image);
+        painter.setClipRect(QRect(0, 0, 1, 1));
+        painter.scale(3, 3);
+        paintPreview(view, &painter);
+        painter.end();
+        int paintedPixels = 0;
+        for (int y = 0; y < image.height(); ++y) {
+            for (int x = 0; x < image.width(); ++x) {
+                paintedPixels += qAlpha(image.pixel(x, y)) != 0;
+            }
+        }
+        EXPECT_GT(paintedPixels, 10000);
+        // First staff line (not just the panel background) is visibly painted.
+        EXPECT_GT(qAlpha(image.pixel(220, 181)), 0);
+        EXPECT_LT(qRed(image.pixel(220, 181)), 200);
+        // The enlarged panel extends past the former 285-pixel width.
+        EXPECT_GT(qAlpha(image.pixel(600, 200)), 0);
+    }
+    ON_CALL(*m_selection, notes(_)).WillByDefault(Return(std::vector<engraving::Note*> {}));
+    refresh(view);
+    EXPECT_EQ(count(view), 0);
+    ON_CALL(*m_selection, notes(_)).WillByDefault(Return(selectedNotes));
+    score->staff(0)->part()->instrument()->setId(u"piano");
+    refresh(view);
+    EXPECT_EQ(count(view), 0);
+}
+
+TEST_F(KepatihanPitchPreviewTests, GenderPdfUsesDegreeAndRegisterWithoutChangingScoreOrPlayback)
+{
+    std::unique_ptr<engraving::MasterScore> score(engraving::ScoreRW::readScore(TEST_SCORE_PATH));
+    ASSERT_NE(score, nullptr);
+    auto* instrument = score->staff(0)->part()->instrument();
+    instrument->setId(u"gender-barung-tuning-8-1-med-diversity");
+    auto* note = engraving::toNote(hitContext(score.get(), { ElementType::NOTE, false }).element);
+    ON_CALL(*m_selection, notes(_)).WillByDefault(Return(std::vector<engraving::Note*> { note }));
+    ON_CALL(*m_selection, isRange()).WillByDefault(Return(false));
+    View view;
+    view.interaction = m_interaction;
+    for (bool entering : { false, true }) {
+        view.entering = entering;
+        for (const auto& item : std::vector<std::tuple<int, int, double> > {
+            { 50, 50, 13 }, { 62, 62, 32 }, { 74, 74, 55 } }) {
+            note->setPitch(std::get<0>(item));
+            const int playbackBefore = note->ppitch();
+            refresh(view);
+            ASSERT_EQ(count(view), 1);
+            EXPECT_EQ(previewPitch(view), std::get<1>(item));
+            EXPECT_EQ(previewCents(view), std::get<2>(item));
+            EXPECT_EQ(note->pitch(), std::get<0>(item));
+            EXPECT_EQ(note->ppitch(), playbackBefore);
+        }
+    }
+    // Existing number 1 is E4 here; PDF reference for 1 Tengah is F4 +50c.
+    instrument->setId(u"gender-barung-tuning-8-2-med-diversity");
+    note->setPitch(64);
+    const int playbackBefore = note->ppitch();
+    refresh(view);
+    EXPECT_EQ(previewPitch(view), 65);
+    EXPECT_EQ(previewCents(view), 50);
+    EXPECT_EQ(note->pitch(), 64);
+    EXPECT_EQ(note->ppitch(), playbackBefore);
+    EXPECT_EQ(instrument->id(), String(u"gender-barung-tuning-8-2-med-diversity"));
+}
+}
 
 namespace mu::playback {
 inline bool operator==(const IPlaybackController::PlayParams& p1, const IPlaybackController::PlayParams& p2)

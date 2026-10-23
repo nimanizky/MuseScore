@@ -2453,6 +2453,10 @@ void TWrite::write(const Note* item, XmlWriter& xml, WriteContext& ctx)
     xml.startElement(item);
     writeItemProperties(item, xml, ctx);
 
+    if (item->numericPulseRow() >= 0) {
+        xml.tag("numericPulseRow", item->numericPulseRow());
+    }
+
     if (item->accidental()) {
         write(item->accidental(), xml, ctx);
     }

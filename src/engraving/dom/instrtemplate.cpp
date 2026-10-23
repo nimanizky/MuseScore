@@ -21,6 +21,8 @@
  */
 
 #include <limits>
+#include <atomic>
+#include <map>
 #include "instrtemplate.h"
 
 #include "io/file.h"
@@ -115,6 +117,10 @@ static int readStaffIdx(XmlReader& e)
     return idx;
 }
 
+// Template pointers must never survive catalogue replacement. Each thread
+// keeps its own bounded lookup cache; mutations invalidate every thread's cache.
+static std::atomic<uint64_t> templateLookupRevision { 0 };
+
 static TraitType traitTypeFromString(const String& str)
 {
     static const std::unordered_map<String, TraitType> types {
@@ -132,6 +138,7 @@ static TraitType traitTypeFromString(const String& str)
 
 void InstrumentGroup::read(XmlReader& e)
 {
+    templateLookupRevision.fetch_add(1, std::memory_order_relaxed);
     id       = e.attribute("id");
     name     = muse::mtrc("engraving/instruments/group", e.attribute("name"));
     extended = e.intAttribute("extended", 0);
@@ -180,6 +187,7 @@ void InstrumentGroup::read(XmlReader& e)
 
 void InstrumentGroup::clear()
 {
+    templateLookupRevision.fetch_add(1, std::memory_order_relaxed);
     muse::DeleteAll(instrumentTemplates);
     instrumentTemplates.clear();
 }
@@ -659,6 +667,7 @@ void clearInstrumentTemplates()
 
 bool loadInstrumentTemplates(const muse::io::path_t& instrTemplatesPath)
 {
+    templateLookupRevision.fetch_add(1, std::memory_order_relaxed);
     File qf(instrTemplatesPath);
     if (!qf.open(IODevice::ReadOnly)) {
         LOGE() << "Could not load instrument templates from " << instrTemplatesPath;
@@ -711,14 +720,35 @@ bool loadInstrumentTemplates(const muse::io::path_t& instrTemplatesPath)
         }
     }
 
+    templateLookupRevision.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
 
 const InstrumentTemplate* searchTemplate(const String& name)
 {
+    struct LookupCache {
+        uint64_t revision = 0;
+        size_t groupCount = 0;
+        std::map<String, const InstrumentTemplate*> entries;
+    };
+    thread_local LookupCache cache;
+    const uint64_t revision = templateLookupRevision.load(std::memory_order_relaxed);
+    if (cache.revision != revision || cache.groupCount != instrumentGroups.size()) {
+        cache.entries.clear();
+        cache.revision = revision;
+        cache.groupCount = instrumentGroups.size();
+    }
+    const auto found = cache.entries.find(name);
+    if (found != cache.entries.end()) {
+        return found->second;
+    }
     for (const InstrumentGroup* g : instrumentGroups) {
         for (const InstrumentTemplate* it : g->instrumentTemplates) {
             if (it->id == name) {
+                if (cache.entries.size() >= 128) {
+                    cache.entries.clear();
+                }
+                cache.entries.emplace(name, it);
                 return it;
             }
         }
