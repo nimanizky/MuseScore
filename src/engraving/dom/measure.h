@@ -124,6 +124,9 @@ public:
     int measureRepeatCount() const { return m_measureRepeatCount; }
     void setMeasureRepeatCount(int n) { m_measureRepeatCount = n; }
 
+    int numericPulseChordNoteLimit() const { return m_numericPulseChordNoteLimit; }
+    void setNumericPulseChordNoteLimit(int n) { m_numericPulseChordNoteLimit = n; }
+
 private:
     MeasureNumber* m_measureNumber = nullptr;      // Measure number text object
     MMRestRange* m_mmRangeText = nullptr;   // Multi measure rest range text object
@@ -140,6 +143,7 @@ private:
 
     bool m_corrupted = false;
     int m_measureRepeatCount = 0;
+    int m_numericPulseChordNoteLimit = 0; // zero means use the TSI default
 };
 
 //---------------------------------------------------------
@@ -356,6 +360,8 @@ public:
     int measureRepeatCount(staff_idx_t staffIdx) const;
     bool containsMeasureRepeat(const staff_idx_t staffIdxFrom, const staff_idx_t staffIdxTo) const;
     void setMeasureRepeatCount(int n, staff_idx_t staffIdx);
+    int numericPulseChordNoteLimit(staff_idx_t staffIdx) const;
+    void setNumericPulseChordNoteLimit(int n, staff_idx_t staffIdx);
     bool isMeasureRepeatGroup(staff_idx_t staffIdx) const;
     bool isMeasureRepeatGroupWithNextM(staff_idx_t staffIdx) const;
     bool isMeasureRepeatGroupWithPrevM(staff_idx_t staffIdx) const;

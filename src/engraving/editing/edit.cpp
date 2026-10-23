@@ -2305,10 +2305,12 @@ void Score::cmdDeleteSelection()
         // so we don't try to delete them twice if they are also in selection
         std::set<Spanner*> deletedSpanners;
 
-        auto selectCRAtTickAndTrack = [this, &crsSelectedAfterDeletion](Fraction tick, track_idx_t track) {
-            ChordRest* cr = findCR(tick, track);
-            if (cr) {
-                crsSelectedAfterDeletion.push_back(cr);
+        std::vector<std::pair<Fraction, track_idx_t> > positionsToSelect;
+        std::set<std::pair<Fraction, track_idx_t> > seenPositions;
+        auto selectCRAtTickAndTrack = [&positionsToSelect, &seenPositions](Fraction tick, track_idx_t track) {
+            const auto position = std::make_pair(tick, track);
+            if (seenPositions.insert(position).second) {
+                positionsToSelect.push_back(position);
             }
         };
 
@@ -2418,7 +2420,14 @@ void Score::cmdDeleteSelection()
                         }
                     }
                 }
-                deleteItem(e);
+                if (e->isNote() && toNote(e)->chord()->notes().size() > 1
+                    && numericPulseProfile(e->staff(), e->tick())) {
+                    // Same undoable removal as deleteItem(), without its
+                    // intermediate selection. Select once after the batch.
+                    undoRemoveElement(e);
+                } else {
+                    deleteItem(e);
+                }
             }
 
             if (!elSelectedAfterDeletion) {
@@ -2428,6 +2437,14 @@ void Score::cmdDeleteSelection()
             // add these linked elements to list of already-deleted elements
             for (EngravingObject* se : links) {
                 deletedElements.insert(se);
+            }
+        }
+
+        // Resolve after all deletions: deleting a chord's last number replaces
+        // the chord with a rest. Never retain the removed chord for selection.
+        for (const auto& [tick, track] : positionsToSelect) {
+            if (ChordRest* cr = findCR(tick, track)) {
+                crsSelectedAfterDeletion.push_back(cr);
             }
         }
     }

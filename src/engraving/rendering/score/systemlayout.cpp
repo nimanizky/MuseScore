@@ -44,6 +44,7 @@
 #include "dom/mmrest.h"
 #include "dom/mmrestrange.h"
 #include "dom/note.h"
+#include "dom/numericpulseprofile.h"
 #include "dom/ornament.h"
 #include "dom/page.h"
 #include "dom/pagelockindicator.h"
@@ -1078,6 +1079,9 @@ void SystemLayout::layoutParenthesisAndBigTimeSigs(const ElementsToLayout& eleme
     }
 
     for (TimeSig* timeSig : elementsToLayout.timeSigAboveStaves) {
+        if (numericPulseDefaultChordNoteLimit(timeSig->staff(), timeSig->tick()) > 1) {
+            continue;
+        }
         Autoplace::autoplaceSegmentElement(timeSig, timeSig->mutldata());
     }
 }
@@ -2134,6 +2138,12 @@ void SystemLayout::layoutSystem(System* system, LayoutContext& ctx, double leadi
             h = h * staffMag * system->spatium();
             s->setbbox(system->leftMargin() + leadingHBoxesWidth, 0.0, 0.0, h);
         }
+        for (const MeasureBase* mb : system->measures()) {
+            if (mb->isMeasure() && numericPulseDefaultChordNoteLimit(staff, mb->tick()) > 1) {
+                s->setbbox(system->leftMargin() + leadingHBoxesWidth, 0.0, 0.0,
+                           std::max(s->bbox().height(), staff->staffHeight(mb->tick())));
+            }
+        }
     }
 
     //---------------------------------------------------
@@ -2216,6 +2226,13 @@ void SystemLayout::layout2(System* system, LayoutContext& ctx)
         } else {
             yOffset = 0.0;
             h = staff->staffHeight();
+        }
+        for (const MeasureBase* mb : system->measures()) {
+            if (mb->isMeasure() && numericPulseDefaultChordNoteLimit(staff, mb->tick()) > 1) {
+                yOffset = 0.0;
+                h = std::max(h, staff->staffHeight(mb->tick()));
+                dist = std::max(dist, h);
+            }
         }
         if (ni == visibleStaves.end()) {
             ss->setYOff(yOffset);
@@ -2599,6 +2616,9 @@ void SystemLayout::centerBigTimeSigsAcrossStaves(const System* system)
             for (staff_idx_t staffIdx = 0; staffIdx < nstaves; ++staffIdx) {
                 TimeSig* timeSig = toTimeSig(segment.element(staff2track(staffIdx)));
                 if (!timeSig || !timeSig->showOnThisStaff()) {
+                    continue;
+                }
+                if (numericPulseDefaultChordNoteLimit(timeSig->staff(), timeSig->tick()) > 1) {
                     continue;
                 }
                 staff_idx_t thisStaffIdx = timeSig->effectiveStaffIdx();

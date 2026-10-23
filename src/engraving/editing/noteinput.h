@@ -103,6 +103,9 @@ public:
     static void realtimeAdvance(Transaction& tx, Score* score, bool allowTransposition, const std::vector<int>& activeMidiPitches);
 
 private:
+    static Note* enterNumericPulseRow(Transaction& tx, Score* score, NoteVal& nval, int row);
+    static void clearNumericPulseRow(Score* score, int row);
+
     //! NOTE: Shared prologue/epilogue for the setDuration/toggleRest/toggleDots commands above.
     static bool noteValueChangeAllowed(const Score* score);
     static void applyToSelection(Score* score, const TDuration& oldDuration, bool oldRest, AccidentalType oldAccidentalType,

@@ -6,9 +6,20 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <chrono>
+#include <cstdlib>
+#include <iostream>
+#include <set>
 #include <vector>
+#include <QImage>
+#include "draw/painter.h"
+#include "engraving/rendering/paintoptions.h"
+#include "engraving/rendering/score/tdraw.h"
 
 #include "engraving/dom/beam.h"
+#include "engraving/dom/factory.h"
+#include "engraving/dom/tuplet.h"
+#include "engraving/dom/text.h"
 #include "engraving/dom/chord.h"
 #include "engraving/dom/input.h"
 #include "engraving/dom/instrtemplate.h"
@@ -22,7 +33,9 @@
 #include "engraving/dom/segment.h"
 #include "engraving/dom/slur.h"
 #include "engraving/dom/staff.h"
+#include "engraving/dom/stafflines.h"
 #include "engraving/dom/stafftype.h"
+#include "engraving/dom/timesig.h"
 #include "engraving/editing/edittie.h"
 #include "engraving/editing/editnote.h"
 #include "engraving/editing/noteinput.h"
@@ -58,15 +71,70 @@ MasterScore* makeNumericPulseScore(const String& instrumentId = u"saron-pelog")
     return score;
 }
 
-void enterDegree(MasterScore* score, int degree)
+void enterDegree(MasterScore* score, int degree, bool addFlag = true)
 {
     NoteInputParams params;
     params.numericDegree = degree;
     score->transactionManager()->transaction(TranslatableString::untranslatable("Enter numeric pulse"), [&](Transaction& tx) {
-        NoteInput::addPitch(tx, score, params, true, false);
+        NoteInput::addPitch(tx, score, params, addFlag, false);
     });
 }
 
+}
+
+TEST(Engraving_GamelanNotationTests, InstrumentLookupCacheInvalidatesAfterReplacement)
+{
+    InstrumentGroup group;
+    InstrumentTemplate* original = new InstrumentTemplate;
+    original->id = u"kepatihan-cache-replacement-test";
+    original->trackName = u"Original";
+    group.instrumentTemplates.push_back(original);
+    instrumentGroups.push_back(&group);
+    EXPECT_EQ(searchTemplate(original->id), original);
+    group.clear();
+    InstrumentTemplate* replacement = new InstrumentTemplate;
+    replacement->id = u"kepatihan-cache-replacement-test";
+    replacement->trackName = u"Replacement";
+    group.instrumentTemplates.push_back(replacement);
+    EXPECT_EQ(searchTemplate(replacement->id), replacement);
+    EXPECT_EQ(searchTemplate(replacement->id)->trackName, u"Replacement");
+    group.clear();
+    EXPECT_EQ(searchTemplate(u"kepatihan-cache-replacement-test"), nullptr);
+    instrumentGroups.pop_back();
+}
+
+TEST(Engraving_GamelanNotationTests, RepeatedTsiLookupBenchmark)
+{
+    const String id = u"gender-barung-tuning-8-1-med-diversity";
+    const InstrumentTemplate* expected = searchTemplate(id);
+    ASSERT_NE(expected, nullptr);
+    using Clock = std::chrono::steady_clock;
+    constexpr int iterations = 10000;
+    const auto linearStart = Clock::now();
+    for (int i = 0; i < iterations; ++i) {
+        const InstrumentTemplate* found = nullptr;
+        for (const InstrumentGroup* group : instrumentGroups) {
+            for (const InstrumentTemplate* instrument : group->instrumentTemplates) {
+                if (instrument->id == id) {
+                    found = instrument;
+                    break;
+                }
+            }
+            if (found) {
+                break;
+            }
+        }
+        ASSERT_EQ(found, expected);
+    }
+    const auto cachedStart = Clock::now();
+    for (int i = 0; i < iterations; ++i) {
+        ASSERT_EQ(searchTemplate(id), expected);
+    }
+    const auto end = Clock::now();
+    std::cout << "TSI lookup, " << iterations << " calls: linear "
+              << std::chrono::duration<double, std::milli>(cachedStart - linearStart).count()
+              << " ms, cached " << std::chrono::duration<double, std::milli>(end - cachedStart).count()
+              << " ms\n";
 }
 
 TEST(Engraving_GamelanNotationTests, PelogProfileDefinesSevenNumericDegrees)
@@ -87,6 +155,87 @@ TEST(Engraving_GamelanNotationTests, PelogProfileDefinesSevenNumericDegrees)
         EXPECT_EQ(profile.degreeForPitch(pitch)->number, degree);
         EXPECT_EQ(numericPulseDegreeText(&profile, pitch), muse::String::number(degree));
     }
+}
+
+TEST(Engraving_GamelanNotationTests, EveryGenderBarungTsiDefaultsToTwoChordNotes)
+{
+    const std::array<const char16_t*, 12> instrumentIds { {
+        u"gender-barung-tuning-8-1-med-diversity",
+        u"gender-barung-tuning-8-2-med-diversity",
+        u"gender-barung-tuning-8-3-med-diversity",
+        u"gender-barung-tuning-8-4-med-diversity",
+        u"gender-barung-tuning-7-1-max-diversity",
+        u"gender-barung-tuning-7-2-max-diversity",
+        u"gender-barung-tuning-7-3-max-diversity",
+        u"gender-barung-tuning-7-4-max-diversity",
+        u"gender-barung-tuning-8-1-max-uniformity",
+        u"gender-barung-tuning-8-2-max-uniformity",
+        u"gender-barung-tuning-8-3-max-uniformity",
+        u"gender-barung-tuning-8-4-max-uniformity"
+    } };
+
+    for (const char16_t* instrumentId : instrumentIds) {
+        const InstrumentTemplate* instrumentTemplate = searchTemplate(muse::String(instrumentId));
+        ASSERT_NE(instrumentTemplate, nullptr) << muse::String(instrumentId).toStdString();
+        ASSERT_TRUE(instrumentTemplate->numericPulseProfile.isValid()) << muse::String(instrumentId).toStdString();
+        EXPECT_FALSE(instrumentTemplate->numericPulseProfile.monophonic) << muse::String(instrumentId).toStdString();
+        EXPECT_EQ(instrumentTemplate->numericPulseProfile.chordNoteLimit, 2) << muse::String(instrumentId).toStdString();
+    }
+}
+
+TEST(Engraving_GamelanNotationTests, GenderBarungChordLimitCanBeOverriddenPerMeasure)
+{
+    MasterScore* score = makeNumericPulseScore(u"gender-barung-tuning-8-1-med-diversity");
+    ASSERT_NE(score, nullptr);
+    Measure* firstMeasure = score->firstMeasure();
+    ASSERT_NE(firstMeasure, nullptr);
+    Measure* secondMeasure = firstMeasure->nextMeasure();
+    ASSERT_NE(secondMeasure, nullptr);
+
+    firstMeasure->setNumericPulseChordNoteLimit(5, 0);
+    EXPECT_EQ(numericPulseDefaultChordNoteLimit(score->staff(0), firstMeasure->tick()), 2);
+    EXPECT_EQ(numericPulseChordNoteLimit(score->staff(0), firstMeasure->tick()), 5);
+    EXPECT_EQ(numericPulseChordNoteLimit(score->staff(0), secondMeasure->tick()), 2);
+
+    const String savePath = u"gender-barung-chord-limit-roundtrip.mscx";
+    ASSERT_TRUE(ScoreRW::saveScore(score, savePath));
+    delete score;
+    MasterScore* reopened = ScoreRW::readScore(savePath, true);
+    ASSERT_NE(reopened, nullptr);
+
+    Measure* reopenedFirst = reopened->firstMeasure();
+    ASSERT_NE(reopenedFirst, nullptr);
+    Measure* reopenedSecond = reopenedFirst->nextMeasure();
+    ASSERT_NE(reopenedSecond, nullptr);
+    EXPECT_EQ(reopenedFirst->numericPulseChordNoteLimit(0), 5);
+    EXPECT_EQ(numericPulseChordNoteLimit(reopened->staff(0), reopenedFirst->tick()), 5);
+    EXPECT_EQ(reopenedSecond->numericPulseChordNoteLimit(0), 0);
+    EXPECT_EQ(numericPulseChordNoteLimit(reopened->staff(0), reopenedSecond->tick()), 2);
+
+    delete reopened;
+}
+
+TEST(Engraving_GamelanNotationTests, GenderBarungAddsChordNotesUpToTheMeasureLimit)
+{
+    MasterScore* score = makeNumericPulseScore(u"gender-barung-tuning-8-1-med-diversity");
+    ASSERT_NE(score, nullptr);
+    Measure* measure = score->firstMeasure();
+    ASSERT_NE(measure, nullptr);
+    measure->setNumericPulseChordNoteLimit(5, 0);
+
+    enterDegree(score, 1, false); // establish the chord
+    enterDegree(score, 2);
+    enterDegree(score, 3);
+    enterDegree(score, 4);
+    enterDegree(score, 5);
+    enterDegree(score, 6); // the fifth note is the local limit
+
+    Chord* chord = measure->findChord(Fraction(0, 1), 0);
+    ASSERT_NE(chord, nullptr);
+    EXPECT_EQ(chord->notes().size(), 5u);
+    EXPECT_EQ(numericPulseChordNoteLimit(score->staff(0), measure->tick()), 5);
+    EXPECT_EQ(numericPulseChordNoteLimit(score->staff(0), measure->nextMeasure()->tick()), 2);
+    delete score;
 }
 
 TEST(Engraving_GamelanNotationTests, RequestedPelogInstrumentProfilesAreAvailable)
@@ -219,6 +368,350 @@ TEST(Engraving_GamelanNotationTests, RegisterDotsExpandGlyphAndMoveDurationMarks
     EXPECT_GT(lower.bottom(), plain.bottom());
     EXPECT_LT(rendering::score::numericPulseDurationMarkY(upper, spatium, 0), upper.top());
     EXPECT_DOUBLE_EQ(rendering::score::numericPulseRegisterDotDiameter(spatium), 0.60 * spatium);
+}
+
+TEST(Engraving_GamelanNotationTests, SelectedNumericRhythmChangesPreserveChordPitchesAndRows)
+{
+    for (const char16_t* instrumentId : { u"gender-barung-tuning-8-1-med-diversity", u"rebab-tuning-8-4-max-uniformity" }) {
+        for (bool entering : { false, true }) {
+            MasterScore* score = makeNumericPulseScore(instrumentId);
+            ASSERT_NE(score, nullptr);
+            enterDegree(score, 5, false);
+            if (numericPulseDefaultChordNoteLimit(score->staff(0), Fraction(0, 1)) > 1) {
+                enterDegree(score, 2);
+            }
+            Chord* original = score->firstMeasure()->findChord(Fraction(0, 1), 0);
+            ASSERT_NE(original, nullptr);
+            std::vector<std::pair<int, int>> pitchesAndRows;
+            for (const Note* note : original->notes()) {
+                pitchesAndRows.emplace_back(note->pitch(), note->numericPulseRow());
+            }
+            score->inputState().setNoteEntryMode(entering);
+            for (DurationType duration : { DurationType::V_EIGHTH, DurationType::V_16TH, DurationType::V_HALF,
+                                          DurationType::V_WHOLE, DurationType::V_QUARTER }) {
+                Chord* chord = score->firstMeasure()->findChord(Fraction(0, 1), 0);
+                ASSERT_NE(chord, nullptr);
+                const DurationType oldDuration = chord->durationType().type();
+                score->select(chord->upNote());
+                score->transactionManager()->transaction(TranslatableString::untranslatable("Change selected rhythm"), [&](Transaction& tx) {
+                    NoteInput::setDuration(tx, score, duration);
+                });
+                chord = score->firstMeasure()->findChord(Fraction(0, 1), 0);
+                ASSERT_NE(chord, nullptr);
+                EXPECT_EQ(chord->durationType().type(), duration);
+                EXPECT_EQ(chord->notes().size(), pitchesAndRows.size());
+                for (const auto& [pitch, row] : pitchesAndRows) {
+                    ASSERT_NE(chord->findNote(pitch), nullptr);
+                    EXPECT_EQ(chord->findNote(pitch)->numericPulseRow(), row);
+                }
+                score->undoRedo(true, nullptr);
+                chord = score->firstMeasure()->findChord(Fraction(0, 1), 0);
+                ASSERT_NE(chord, nullptr);
+                EXPECT_EQ(chord->durationType().type(), oldDuration);
+                score->undoRedo(false, nullptr);
+            }
+            delete score;
+        }
+    }
+}
+
+TEST(Engraving_GamelanNotationTests, NumericDigitMetricsCachePreservesGeometryAndIsBounded)
+{
+    using namespace rendering::score;
+    clearNumericPulseTextMetricsCache();
+    for (double scale : { 0.7, 1.0, 1.5 }) {
+        for (int degree = 1; degree <= 9; ++degree) {
+            const String text = String::number(degree);
+            const muse::draw::FontMetrics metrics(numericPulseFont(scale));
+            RectF expected = metrics.tightBoundingRect(text);
+            expected.translate(-expected.center().x(), 0.0);
+            for (int repeat = 0; repeat < 3; ++repeat) {
+                const RectF actual = numericPulseTextBbox(text, scale);
+                EXPECT_DOUBLE_EQ(actual.x(), expected.x());
+                EXPECT_DOUBLE_EQ(actual.y(), expected.y());
+                EXPECT_DOUBLE_EQ(actual.width(), expected.width());
+                EXPECT_DOUBLE_EQ(actual.height(), expected.height());
+                EXPECT_DOUBLE_EQ(numericPulseTextOriginX(text, scale), -metrics.horizontalAdvance(text) * 0.5);
+            }
+        }
+    }
+    for (int i = 1; i <= 100; ++i) {
+        numericPulseTextBbox(u"1", 0.5 + i * 0.01);
+    }
+    EXPECT_LE(numericPulseTextMetricsCache().size(), 64u);
+    clearNumericPulseTextMetricsCache();
+    EXPECT_TRUE(numericPulseTextMetricsCache().empty());
+}
+
+TEST(Engraving_GamelanNotationTests, OptionalRealScoreRhythmBenchmark)
+{
+    const char* path = std::getenv("MUSESCORE_RHYTHM_BENCHMARK_SCORE");
+    if (!path) {
+        GTEST_SKIP() << "Set MUSESCORE_RHYTHM_BENCHMARK_SCORE for a read-only, in-memory edit benchmark";
+    }
+    std::unique_ptr<MasterScore> score(ScoreRW::readScore(String::fromUtf8(path), true));
+    ASSERT_NE(score, nullptr);
+    Chord* target = nullptr;
+    for (Segment* segment = score->firstSegment(SegmentType::ChordRest); segment && !target;
+         segment = segment->next1(SegmentType::ChordRest)) {
+        for (track_idx_t track = 0; track < score->ntracks(); ++track) {
+            EngravingItem* element = segment->element(track);
+            if (element && element->isChord() && !toChord(element)->tuplet()
+                && numericPulseProfile(element->staff(), element->tick())) {
+                target = toChord(element);
+                break;
+            }
+        }
+    }
+    ASSERT_NE(target, nullptr);
+    const Fraction tick = target->tick();
+    const track_idx_t track = target->track();
+    const int pitch = target->upNote()->pitch();
+    score->inputState().setNoteEntryMode(false);
+    for (DurationType duration : { DurationType::V_EIGHTH, DurationType::V_16TH, DurationType::V_QUARTER }) {
+        Chord* chord = score->tick2measure(tick)->findChord(tick, track);
+        ASSERT_NE(chord, nullptr);
+        if (chord->durationType().type() == duration) {
+            continue;
+        }
+        score->select(chord->upNote());
+        const auto start = std::chrono::steady_clock::now();
+        score->transactionManager()->transaction(TranslatableString::untranslatable("Benchmark rhythm edit"), [&](Transaction& tx) {
+            NoteInput::setDuration(tx, score.get(), duration);
+        });
+        std::cout << "Real-score rhythm edit: "
+                  << std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count()
+                  << " ms\n";
+        chord = score->tick2measure(tick)->findChord(tick, track);
+        ASSERT_NE(chord, nullptr);
+        EXPECT_EQ(chord->upNote()->pitch(), pitch);
+        EXPECT_EQ(chord->durationType().type(), duration);
+        score->undoRedo(true, nullptr);
+    }
+    // Never save: the original score and its soundfont assignments are untouched.
+}
+
+TEST(Engraving_GamelanNotationTests, RegisterDotsStayCloseToVisibleDigits)
+{
+    for (int degree = 1; degree <= 6; ++degree) {
+        const muse::String text = muse::String::number(degree);
+        const double spatium = 1.0;
+        const muse::RectF digit = rendering::score::numericPulseTextBbox(text, 1.0);
+        const muse::RectF upper = rendering::score::numericPulseRegisterDotBbox(digit, spatium, 1, 0);
+        const muse::RectF lower = rendering::score::numericPulseRegisterDotBbox(digit, spatium, -1, 0);
+        EXPECT_NEAR(digit.top() - upper.bottom(), 0.10 * spatium, 1e-6);
+        EXPECT_NEAR(lower.top() - digit.bottom(), 0.10 * spatium, 1e-6);
+        EXPECT_GT(digit.top(), upper.bottom());
+        EXPECT_GT(lower.top(), digit.bottom());
+    }
+}
+
+TEST(Engraving_GamelanNotationTests, EveryTsiArrowCrossesOctavesInBothDirections)
+{
+    const std::array<const char16_t*, 12> tunings {
+        u"8-1-med-diversity", u"8-2-med-diversity", u"8-3-med-diversity", u"8-4-med-diversity",
+        u"8-1-max-uniformity", u"8-2-max-uniformity", u"8-3-max-uniformity", u"8-4-max-uniformity",
+        u"7-1-max-diversity", u"7-2-max-diversity", u"7-3-max-diversity", u"7-4-max-diversity"
+    };
+    for (const char16_t* prefix : { u"gender-barung-tuning-", u"rebab-tuning-" }) {
+        for (const char16_t* tuning : tunings) {
+            const String instrumentId = String(prefix) + String(tuning);
+            SCOPED_TRACE(instrumentId.toStdString());
+            MasterScore* score = makeNumericPulseScore(instrumentId);
+            ASSERT_NE(score, nullptr);
+            enterDegree(score, 6, false);
+            Chord* chord = score->firstMeasure()->findChord(Fraction(0, 1), 0);
+            ASSERT_NE(chord, nullptr);
+            Note* note = chord->upNote();
+            ASSERT_NE(note, nullptr);
+            const NumericPulseProfile* profile = numericPulseProfile(note->staff(), note->tick());
+            ASSERT_NE(profile, nullptr);
+            score->select(note);
+            auto move = [&](bool up) {
+                score->startCmd(TranslatableString::untranslatable("Step numeric degree"));
+                EditNote::upDown(score, up, UpDownMode::NUMERIC_PULSE);
+                score->endCmd();
+            };
+            move(true);
+            EXPECT_EQ(note->pitch(), profile->degreeForNumber(1)->scorePitch + 12);
+            EXPECT_EQ(numericPulseRegister(profile, note->pitch()), 1);
+            move(true);
+            EXPECT_EQ(note->pitch(), profile->degreeForNumber(2)->scorePitch + 12);
+            move(false);
+            move(false);
+            EXPECT_EQ(note->pitch(), profile->degreeForNumber(6)->scorePitch);
+            for (int i = 0; i < 5; ++i) {
+                move(false);
+            }
+            EXPECT_EQ(note->pitch(), profile->degreeForNumber(1)->scorePitch);
+            move(false);
+            EXPECT_EQ(note->pitch(), profile->degreeForNumber(6)->scorePitch - 12);
+            EXPECT_EQ(numericPulseRegister(profile, note->pitch()), -1);
+            move(false);
+            EXPECT_EQ(note->pitch(), profile->degreeForNumber(5)->scorePitch - 12);
+            score->undoRedo(true, nullptr);
+            EXPECT_EQ(note->pitch(), profile->degreeForNumber(6)->scorePitch - 12);
+            score->undoRedo(false, nullptr);
+            EXPECT_EQ(note->pitch(), profile->degreeForNumber(5)->scorePitch - 12);
+            score->startCmd(TranslatableString::untranslatable("Set upper register"));
+            EditNote::setNumericPulseRegister(score, 1);
+            score->endCmd();
+            move(true);
+            move(true);
+            EXPECT_EQ(note->pitch(), profile->degreeForNumber(1)->scorePitch + 24);
+            EXPECT_EQ(numericPulseRegister(profile, note->pitch()), 2);
+            score->startCmd(TranslatableString::untranslatable("Set lower register"));
+            EditNote::setNumericPulseRegister(score, -1);
+            score->endCmd();
+            move(false);
+            EXPECT_EQ(note->pitch(), profile->degreeForNumber(6)->scorePitch - 24);
+            EXPECT_EQ(numericPulseRegister(profile, note->pitch()), -2);
+            delete score;
+        }
+    }
+}
+
+TEST(Engraving_GamelanNotationTests, GenderBarungRowsAcceptDirectInputAndKeepTheirNumbers)
+{
+    MasterScore* score = makeNumericPulseScore(u"gender-barung-tuning-8-1-med-diversity");
+    ASSERT_NE(score, nullptr);
+    InputState& is = score->inputState();
+    Measure* measure = score->firstMeasure();
+    ASSERT_NE(measure, nullptr);
+    score->transactionManager()->transaction(TranslatableString::untranslatable("Prepare numeric pulses"), [&](Transaction&) {
+        score->normalizeNumericPulseMeasureRests();
+    });
+    Segment* segment = score->tick2segment(Fraction(0, 1), false, SegmentType::ChordRest);
+    ASSERT_NE(segment, nullptr);
+    const NumericPulseProfile* profile = numericPulseProfile(score->staff(0), segment->tick());
+    ASSERT_NE(profile, nullptr);
+
+    auto clickRow = [&](int row, int degree) {
+        is.setNotes({ NoteInput::noteVal(score, profile->degreeForNumber(degree)->scorePitch, 0, false) });
+        Position position;
+        position.segment = segment;
+        position.staffIdx = 0;
+        position.numericPulseRow = row;
+        score->transactionManager()->transaction(TranslatableString::untranslatable("Click numeric row"), [&](Transaction& tx) {
+            EXPECT_TRUE(NoteInput::putNote(tx, score, position, true));
+        });
+    };
+    clickRow(1, 6); // Enter the bottom rail first, without Add-to-chord.
+    clickRow(0, 1);
+    Chord* chord = measure->findChord(Fraction(0, 1), 0);
+    ASSERT_NE(chord, nullptr);
+    ASSERT_EQ(chord->notes().size(), 2u);
+    Note* top = chord->findNote(profile->degreeForNumber(1)->scorePitch);
+    Note* bottom = chord->findNote(profile->degreeForNumber(6)->scorePitch);
+    ASSERT_NE(top, nullptr);
+    ASSERT_NE(bottom, nullptr);
+    EXPECT_EQ(top->numericPulseRow(), 0);
+    EXPECT_EQ(bottom->numericPulseRow(), 1);
+    EXPECT_EQ(chord->durationType().type(), DurationType::V_QUARTER);
+
+    clickRow(0, 5); // Repitch only the top rail; do not replace the chord.
+    EXPECT_EQ(chord->notes().size(), 2u);
+    EXPECT_EQ(top->pitch(), profile->degreeForNumber(5)->scorePitch);
+    EXPECT_EQ(bottom->pitch(), profile->degreeForNumber(6)->scorePitch);
+    EXPECT_EQ(bottom->numericPulseRow(), 1);
+    score->undoRedo(true, nullptr);
+    EXPECT_EQ(top->pitch(), profile->degreeForNumber(1)->scorePitch);
+    score->undoRedo(false, nullptr);
+
+    measure->setNumericPulseChordNoteLimit(5, 0);
+    clickRow(4, 3); // Leave rows 2 and 3 empty.
+    EXPECT_EQ(chord->notes().size(), 3u);
+    Note* lastRow = chord->findNote(profile->degreeForNumber(3)->scorePitch);
+    ASSERT_NE(lastRow, nullptr);
+    EXPECT_EQ(lastRow->numericPulseRow(), 4);
+    score->doLayout();
+    ASSERT_EQ(measure->staffLines(0)->lines().size(), 5u);
+    EXPECT_GT(numericPulseRowDistance(score->staff(0), measure->tick()), 3.0 * score->staff(0)->spatium(measure->tick()));
+    EXPECT_DOUBLE_EQ(lastRow->pos().y() - top->pos().y(), 4.0 * numericPulseRowDistance(score->staff(0), measure->tick()));
+
+    is.setSegment(segment);
+    is.setNumericPulseRow(0);
+    score->transactionManager()->transaction(TranslatableString::untranslatable("Clear top numeric row"), [&](Transaction& tx) {
+        NoteInput::addRest(tx, score);
+    });
+    EXPECT_EQ(chord->notes().size(), 2u);
+    EXPECT_EQ(bottom->numericPulseRow(), 1);
+    EXPECT_EQ(lastRow->numericPulseRow(), 4);
+    score->undoRedo(true, nullptr);
+    EXPECT_EQ(chord->notes().size(), 3u);
+    const int bottomPitch = bottom->pitch();
+    const int lastRowPitch = lastRow->pitch();
+    const String savePath = u"gender-barung-rows-roundtrip.mscx";
+    ASSERT_TRUE(ScoreRW::saveScore(score, savePath));
+    delete score;
+    MasterScore* reopened = ScoreRW::readScore(savePath, true);
+    ASSERT_NE(reopened, nullptr);
+    Chord* reopenedChord = reopened->firstMeasure()->findChord(Fraction(0, 1), 0);
+    ASSERT_NE(reopenedChord, nullptr);
+    ASSERT_NE(reopenedChord->findNote(lastRowPitch), nullptr);
+    ASSERT_NE(reopenedChord->findNote(bottomPitch), nullptr);
+    EXPECT_EQ(reopenedChord->findNote(lastRowPitch)->numericPulseRow(), 4);
+    EXPECT_EQ(reopenedChord->findNote(bottomPitch)->numericPulseRow(), 1);
+    delete reopened;
+}
+
+TEST(Engraving_GamelanNotationTests, GenderBarungTimeSignatureStaysBetweenDefaultRails)
+{
+    MasterScore* score = makeNumericPulseScore(u"gender-barung-tuning-8-1-med-diversity");
+    ASSERT_NE(score, nullptr);
+    Measure* measure = score->firstMeasure();
+    Segment* segment = measure->findSegment(SegmentType::TimeSig, measure->tick());
+    ASSERT_NE(segment, nullptr);
+    TimeSig* timeSig = toTimeSig(segment->element(0));
+    ASSERT_NE(timeSig, nullptr);
+    for (int rows : { 0, 3, 6, 9 }) {
+        measure->setNumericPulseChordNoteLimit(rows, 0);
+        measure->nextMeasure()->setNumericPulseChordNoteLimit(9, 0);
+        for (TimeSigPlacement placement : { TimeSigPlacement::NORMAL, TimeSigPlacement::ABOVE_STAVES,
+                                           TimeSigPlacement::ACROSS_STAVES }) {
+            score->style().set(Sid::timeSigPlacement, placement);
+            score->style().set(Sid::timeSigNormalY, 3.0);
+            score->doLayout();
+            EXPECT_EQ(timeSig->timeSigPlacement(), TimeSigPlacement::NORMAL);
+            const double center = (timeSig->ldata()->pz.y() + timeSig->ldata()->pn.y()) * .5 + timeSig->pos().y();
+            EXPECT_NEAR(center, numericPulseRowDistance(score->staff(0), measure->tick()) * .5, 0.001);
+        }
+    }
+    delete score;
+}
+
+TEST(Engraving_GamelanNotationTests, GenderBarungDegreeInputUsesTheActiveRowWithoutAdd)
+{
+    MasterScore* score = makeNumericPulseScore(u"gender-barung-tuning-8-1-med-diversity");
+    ASSERT_NE(score, nullptr);
+    score->firstMeasure()->setNumericPulseChordNoteLimit(9, 0);
+    score->transactionManager()->transaction(TranslatableString::untranslatable("Prepare numeric pulses"), [&](Transaction&) {
+        score->normalizeNumericPulseMeasureRests();
+    });
+    Segment* segment = score->tick2segment(Fraction(0, 1), false, SegmentType::ChordRest);
+    ASSERT_NE(segment, nullptr);
+    InputState& is = score->inputState();
+    for (int row : { 8, 0, 4 }) {
+        is.setSegment(segment);
+        is.setNumericPulseRow(row);
+        enterDegree(score, 1, false); // Same pitch on three different rails is allowed.
+    }
+    Chord* chord = score->firstMeasure()->findChord(Fraction(0, 1), 0);
+    ASSERT_NE(chord, nullptr);
+    EXPECT_EQ(chord->notes().size(), 3u);
+    std::set<int> rows;
+    for (const Note* note : chord->notes()) {
+        rows.insert(note->numericPulseRow());
+    }
+    EXPECT_EQ(rows, (std::set<int> { 0, 4, 8 }));
+    score->doLayout();
+    ASSERT_EQ(score->firstMeasure()->staffLines(0)->lines().size(), 9u);
+    for (const Note* note : chord->notes()) {
+        Position position;
+        EXPECT_TRUE(score->getPosition(&position, note->canvasPos(), 0));
+        EXPECT_EQ(position.numericPulseRow, note->numericPulseRow());
+    }
+    delete score;
 }
 
 TEST(Engraving_GamelanNotationTests, EmptyPulseDotIsReadableAtNormalScale)
@@ -446,6 +939,38 @@ TEST(Engraving_GamelanNotationTests, OctavePitchModeMovesAndClampsNumericRegiste
     delete score;
 }
 
+TEST(Engraving_GamelanNotationTests, GenderBatchOctavePreservesDegreesAndRhythm)
+{
+    MasterScore* score = makeNumericPulseScore(u"gender-barung-tuning-8-1-med-diversity");
+    ASSERT_NE(score, nullptr);
+    enterDegree(score, 1, false);
+    enterDegree(score, 3);
+    Chord* chord = score->firstMeasure()->findChord(Fraction(0, 1), 0);
+    ASSERT_NE(chord, nullptr);
+    ASSERT_EQ(chord->notes().size(), 2u);
+    const auto duration = chord->ticks();
+    std::vector<int> original;
+    std::vector<EngravingItem*> selected;
+    for (Note* note : chord->notes()) {
+        original.push_back(note->pitch());
+        selected.push_back(note);
+    }
+    score->deselectAll();
+    for (EngravingItem* item : selected) {
+        score->select(item, SelectType::ADD);
+    }
+    ASSERT_EQ(score->selection().uniqueNotes().size(), 2u);
+    for (bool up : { true, false, false, true }) {
+        EditNote::upDown(score, up, UpDownMode::OCTAVE);
+        for (size_t i = 0; i < chord->notes().size(); ++i) {
+            original[i] += up ? 12 : -12;
+            EXPECT_EQ(chord->notes()[i]->pitch(), original[i]);
+        }
+        EXPECT_EQ(chord->ticks(), duration);
+    }
+    delete score;
+}
+
 TEST(Engraving_GamelanNotationTests, NumericDegreeInputKeepsExplicitRegister)
 {
     MasterScore* score = makeNumericPulseScore();
@@ -632,7 +1157,7 @@ TEST(Engraving_GamelanNotationTests, NumericInputSplitsNewMeasureIntoQuarterPuls
     delete score;
 }
 
-TEST(Engraving_GamelanNotationTests, ArrowPitchModeSkipsUnsupportedSlendroDegreesAndClamps)
+TEST(Engraving_GamelanNotationTests, ArrowPitchModeSkipsUnsupportedSlendroDegreesAndWraps)
 {
     MasterScore* score = makeNumericPulseScore(u"saron-slendro");
     ASSERT_NE(score, nullptr);
@@ -659,17 +1184,17 @@ TEST(Engraving_GamelanNotationTests, ArrowPitchModeSkipsUnsupportedSlendroDegree
     score->startCmd(TranslatableString::untranslatable("Numeric degree upper boundary"));
     EditNote::upDown(score, true, UpDownMode::NUMERIC_PULSE);
     score->endCmd();
+    EXPECT_EQ(note->pitch(), 72);
+
+    score->startCmd(TranslatableString::untranslatable("Numeric degree down"));
+    EditNote::upDown(score, false, UpDownMode::NUMERIC_PULSE);
+    score->endCmd();
     EXPECT_EQ(note->pitch(), 69);
 
     score->startCmd(TranslatableString::untranslatable("Numeric degree down"));
     EditNote::upDown(score, false, UpDownMode::NUMERIC_PULSE);
     score->endCmd();
     EXPECT_EQ(note->pitch(), 67);
-
-    score->startCmd(TranslatableString::untranslatable("Numeric degree down"));
-    EditNote::upDown(score, false, UpDownMode::NUMERIC_PULSE);
-    score->endCmd();
-    EXPECT_EQ(note->pitch(), 64);
 
     delete score;
 }
@@ -746,7 +1271,7 @@ TEST(Engraving_GamelanNotationTests, ArrowUpReplacesFullMeasureRestWithoutCrashi
     delete score;
 }
 
-TEST(Engraving_GamelanNotationTests, ArrowDownReplacesFirstProfileDegreeWithEmptyPulse)
+TEST(Engraving_GamelanNotationTests, ExplicitRestReplacementKeepsDurationAndUndo)
 {
     MasterScore* score = makeNumericPulseScore(u"gong-kemodong-pelog");
     ASSERT_NE(score, nullptr);
@@ -760,7 +1285,7 @@ TEST(Engraving_GamelanNotationTests, ArrowDownReplacesFirstProfileDegreeWithEmpt
     score->select(note);
 
     score->startCmd(TranslatableString::untranslatable("Empty first numeric degree"));
-    EditNote::upDown(score, false, UpDownMode::NUMERIC_PULSE);
+    ASSERT_NE(EditNote::replaceFirstNumericPulseDegreeWithRest(score, note), nullptr);
     score->endCmd();
 
     Segment* segment = score->tick2segment(Fraction(0, 1), false, SegmentType::ChordRest);
@@ -963,6 +1488,216 @@ TEST(Engraving_GamelanNotationTests, SixteenthPulseGroupUsesTwoFlatRhythmMarks)
     delete score;
 }
 
+TEST(Engraving_GamelanNotationTests, ConvertedWesternBeamKeepsFlatBarsAndDeleteUndo)
+{
+    for (DurationType duration : { DurationType::V_EIGHTH, DurationType::V_16TH }) {
+        std::unique_ptr<MasterScore> score(makeNumericPulseScore(u"gender-barung-tuning-8-1-med-diversity"));
+        ASSERT_NE(score, nullptr);
+        score->inputState().setDuration(duration);
+        for (int degree : { 1, 3, 5, 6 }) {
+            enterDegree(score.get(), degree, false);
+        }
+        // First lay out as Western notation, then assign the numeric staff and
+        // tuning exactly as conversion does. Preserve existing note/beam data.
+        score->staff(0)->part()->instrument()->setId(u"vibraphone");
+        score->staff(0)->setStaffType(Fraction(0, 1), *StaffType::preset(StaffTypes::STANDARD));
+        score->setLayoutAll();
+        score->doLayout();
+        score->staff(0)->part()->instrument()->setId(u"gender-barung-tuning-8-1-med-diversity");
+        score->staff(0)->part()->instrument()->setNumericPulseProfileId(u"kepatihan-tuning-8-1-med-diversity");
+        score->staff(0)->setStaffType(Fraction(0, 1), *StaffType::preset(StaffTypes::NUMERIC_PULSE));
+        score->setLayoutAll();
+        score->doLayout();
+        const Fraction step = TDuration(duration).fraction();
+        Chord* first = score->firstMeasure()->findChord(Fraction(0, 1), 0);
+        Chord* second = score->firstMeasure()->findChord(step, 0);
+        ASSERT_NE(first, nullptr);
+        ASSERT_NE(second, nullptr);
+        ASSERT_NE(first->beam(), nullptr);
+        EXPECT_DOUBLE_EQ(first->beam()->slope(), 0.0);
+        EXPECT_DOUBLE_EQ(first->beam()->beamDist(), rendering::score::numericPulseRhythmMarkDistance(first->spatium())
+                         * first->beam()->mag());
+        const int firstPitch = first->upNote()->pitch();
+        const int secondPitch = second->upNote()->pitch();
+        score->select(second->upNote());
+        score->transactionManager()->transaction(TranslatableString::untranslatable("Delete converted number"), [&](Transaction&) {
+            score->cmdDeleteSelection();
+        });
+        ASSERT_NE(score->firstMeasure()->findChordRest(step, 0), nullptr);
+        EXPECT_TRUE(score->firstMeasure()->findChordRest(step, 0)->isRest());
+        EXPECT_EQ(score->firstMeasure()->findChordRest(step, 0)->ticks(), step);
+        EXPECT_EQ(score->firstMeasure()->findChord(Fraction(0, 1), 0)->upNote()->pitch(), firstPitch);
+        score->undoRedo(true, nullptr);
+        ASSERT_NE(score->firstMeasure()->findChord(step, 0), nullptr);
+        EXPECT_EQ(score->firstMeasure()->findChord(step, 0)->upNote()->pitch(), secondPitch);
+        score->undoRedo(false, nullptr);
+        EXPECT_TRUE(score->firstMeasure()->findChordRest(step, 0)->isRest());
+    }
+}
+
+TEST(Engraving_GamelanNotationTests, KepatihanSubdivisionBarsCenterOnDigits)
+{
+    MasterScore* score = makeNumericPulseScore();
+    ASSERT_NE(score, nullptr);
+    score->inputState().setDuration(DurationType::V_16TH);
+    for (int degree : { 1, 2, 3, 5 }) {
+        enterDegree(score, degree);
+    }
+    score->setLayoutAll();
+    score->doLayout();
+    const Chord* first = score->firstMeasure()->findChord(Fraction(0, 1), 0);
+    const Chord* last = score->firstMeasure()->findChord(Fraction(3, 16), 0);
+    ASSERT_NE(first, nullptr);
+    ASSERT_NE(last, nullptr);
+    const Beam* beam = first->beam();
+    ASSERT_NE(beam, nullptr);
+    ASSERT_FALSE(beam->beamSegments().empty());
+    for (const BeamSegment* segment : beam->beamSegments()) {
+        if (segment->isBeamlet) {
+            continue;
+        }
+        const double firstOverhang = rendering::score::numericPulseGroupOverhang(
+            rendering::score::numericPulseTextBbox(u"1", first->upNote()->magS()), first->spatium());
+        const double lastOverhang = rendering::score::numericPulseGroupOverhang(
+            rendering::score::numericPulseTextBbox(u"5", last->upNote()->magS()), last->spatium());
+        EXPECT_NEAR(segment->line.x1() + beam->pagePos().x(), first->upNote()->pagePos().x() - firstOverhang, 0.01);
+        EXPECT_NEAR(segment->line.x2() + beam->pagePos().x(), last->upNote()->pagePos().x() + lastOverhang, 0.01);
+    }
+    delete score;
+}
+
+TEST(Engraving_GamelanNotationTests, KepatihanTripletNumberCentersOnDigits)
+{
+    MasterScore* score = makeNumericPulseScore();
+    ASSERT_NE(score, nullptr);
+    enterDegree(score, 1);
+    Chord* chord = score->firstMeasure()->findChord(Fraction(0, 1), 0);
+    ASSERT_NE(chord, nullptr);
+    Tuplet* tuplet = Factory::createTuplet(score->dummy()->measure());
+    tuplet->setRatio(Fraction(3, 2));
+    tuplet->setTicks(Fraction(1, 4));
+    tuplet->setBaseLen(TDuration(DurationType::V_EIGHTH));
+    tuplet->setTrack(0);
+    tuplet->setTick(Fraction(0, 1));
+    tuplet->setParent(chord->measure());
+    score->startCmd(muse::TranslatableString::untranslatable("Triplet alignment test"));
+    score->cmdCreateTuplet(chord, tuplet);
+    score->endCmd();
+    score->setLayoutAll();
+    score->doLayout();
+    ASSERT_NE(tuplet->number(), nullptr);
+    EXPECT_NEAR(tuplet->number()->ldata()->pos().x() + tuplet->ldata()->pos().x(),
+                (tuplet->p1().x() + tuplet->p2().x()) * 0.5, 0.01);
+    delete score;
+}
+
+TEST(Engraving_GamelanNotationTests, DeleteSelectedKepatihanNumbersKeepsRestRowsAndUndo)
+{
+    for (bool entering : { false, true }) {
+        for (bool wholeChord : { false, true }) {
+            std::unique_ptr<MasterScore> score(makeNumericPulseScore(u"gender-barung-tuning-8-1-med-diversity"));
+            ASSERT_NE(score, nullptr);
+            enterDegree(score.get(), 1, false);
+            enterDegree(score.get(), 3);
+            enterDegree(score.get(), 5, false);
+            Chord* first = score->firstMeasure()->findChord(Fraction(0, 1), 0);
+            Chord* next = score->firstMeasure()->findChord(Fraction(1, 4), 0);
+            ASSERT_NE(first, nullptr);
+            ASSERT_NE(next, nullptr);
+            ASSERT_EQ(first->notes().size(), 2u);
+            const int neighborPitch = next->upNote()->pitch();
+            const int remainingPitch = first->downNote()->pitch();
+            const int remainingRow = first->downNote()->numericPulseRow();
+            const auto notes = first->notes();
+            score->deselectAll();
+            if (wholeChord) {
+                for (Note* note : notes) {
+                    score->select(note, SelectType::ADD);
+                }
+            } else {
+                score->select(first->upNote());
+            }
+            score->inputState().setNoteEntryMode(entering);
+            score->transactionManager()->transaction(TranslatableString::untranslatable("Delete Kepatihan numbers"), [&](Transaction&) {
+                score->cmdDeleteSelection();
+            });
+            ChordRest* result = score->firstMeasure()->findChordRest(Fraction(0, 1), 0);
+            ASSERT_NE(result, nullptr);
+            EXPECT_EQ(result->ticks(), Fraction(1, 4));
+            EXPECT_EQ(result->isRest(), wholeChord);
+            if (!wholeChord) {
+                ASSERT_TRUE(result->isChord());
+                EXPECT_EQ(toChord(result)->notes().size(), 1u);
+                EXPECT_EQ(toChord(result)->upNote()->pitch(), remainingPitch);
+                EXPECT_EQ(toChord(result)->upNote()->numericPulseRow(), remainingRow);
+            } else {
+                EXPECT_TRUE(score->selection().uniqueNotes().empty());
+                EXPECT_EQ(score->selection().element(), result);
+            }
+            EXPECT_EQ(score->firstMeasure()->findChord(Fraction(1, 4), 0)->upNote()->pitch(), neighborPitch);
+            score->undoRedo(true, nullptr);
+            ASSERT_NE(score->firstMeasure()->findChord(Fraction(0, 1), 0), nullptr);
+            EXPECT_EQ(score->firstMeasure()->findChord(Fraction(0, 1), 0)->notes().size(), 2u);
+            score->undoRedo(false, nullptr);
+            EXPECT_EQ(score->firstMeasure()->findChordRest(Fraction(0, 1), 0)->isRest(), wholeChord);
+        }
+    }
+}
+
+TEST(Engraving_GamelanNotationTests, OptionalRealScoreDeleteBenchmark)
+{
+    const char* path = std::getenv("MUSESCORE_RHYTHM_BENCHMARK_SCORE");
+    if (!path) {
+        GTEST_SKIP() << "Set MUSESCORE_RHYTHM_BENCHMARK_SCORE for an in-memory delete benchmark";
+    }
+    std::unique_ptr<MasterScore> score(ScoreRW::readScore(String::fromUtf8(path), true));
+    ASSERT_NE(score, nullptr);
+    Chord* target = nullptr;
+    Chord* fallback = nullptr;
+    for (Segment* segment = score->firstSegment(SegmentType::ChordRest); segment && !target;
+         segment = segment->next1(SegmentType::ChordRest)) {
+        for (track_idx_t track = 0; track < score->ntracks(); ++track) {
+            EngravingItem* item = segment->element(track);
+            if (item && item->isChord() && !toChord(item)->tuplet() && numericPulseProfile(item->staff(), item->tick())) {
+                if (!fallback) {
+                    fallback = toChord(item);
+                }
+                if (toChord(item)->beam()) {
+                    target = toChord(item);
+                    break;
+                }
+            }
+        }
+    }
+    target = target ? target : fallback;
+    ASSERT_NE(target, nullptr);
+    const Fraction tick = target->tick();
+    const track_idx_t track = target->track();
+    const size_t originalCount = target->notes().size();
+    for (bool wholeChord : { false, true }) {
+        Chord* chord = score->tick2measure(tick)->findChord(tick, track);
+        ASSERT_NE(chord, nullptr);
+        score->deselectAll();
+        if (wholeChord) {
+            for (Note* note : chord->notes()) {
+                score->select(note, SelectType::ADD);
+            }
+        } else {
+            score->select(chord->upNote());
+        }
+        const auto start = std::chrono::steady_clock::now();
+        score->transactionManager()->transaction(TranslatableString::untranslatable("Benchmark delete"), [&](Transaction&) {
+            score->cmdDeleteSelection();
+        });
+        std::cout << "Real-score delete (whole chord=" << wholeChord << "): "
+                  << std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count() << " ms\n";
+        score->undoRedo(true, nullptr);
+        ASSERT_NE(score->tick2measure(tick)->findChord(tick, track), nullptr);
+        EXPECT_EQ(score->tick2measure(tick)->findChord(tick, track)->notes().size(), originalCount);
+    }
+    // No saving: benchmark changes exist only in memory.
+}
+
 TEST(Engraving_GamelanNotationTests, DeletePulseUndoRedoDoesNotShiftNeighbors)
 {
     MasterScore* score = makeNumericPulseScore();
@@ -1022,6 +1757,29 @@ TEST(Engraving_GamelanNotationTests, NativeTieProvidesContinuation)
     ASSERT_NE(note->tieFor()->endNote(), nullptr);
     EXPECT_EQ(note->tieFor()->endNote()->pitch(), note->pitch());
     EXPECT_EQ(note->tieFor()->endNote()->tick(), Fraction(1, 4));
+    score->setLayoutAll();
+    score->doLayout();
+    ASSERT_FALSE(note->tieFor()->segmentsEmpty());
+    const auto* segment = note->tieFor()->frontSegment();
+    // Check actual drawing on screen and in print, not just tie creation.
+    for (bool printing : { false, true }) {
+        QImage image(1600, 600, QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::transparent);
+        {
+            muse::draw::Painter painter(&image, "Kepatihan tie regression");
+            painter.translate(100 - segment->ldata()->bbox().left(), 100 - segment->ldata()->bbox().top());
+            rendering::PaintOptions options;
+            options.isPrinting = printing;
+            rendering::score::TDraw::drawItem(segment, &painter, options);
+        }
+        int painted = 0;
+        for (int y = 0; y < image.height(); ++y) {
+            for (int x = 0; x < image.width(); ++x) {
+                painted += qAlpha(image.pixel(x, y)) != 0;
+            }
+        }
+        EXPECT_GT(painted, 0);
+    }
     delete score;
 }
 

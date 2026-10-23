@@ -177,6 +177,7 @@ struct Position {
     int fret = INVALID_FRET_INDEX;
     PointF pos;
     bool beyondScore = false;
+    int numericPulseRow = -1;
 };
 
 struct ShowAnchors {

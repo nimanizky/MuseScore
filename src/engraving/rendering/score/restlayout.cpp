@@ -93,8 +93,13 @@ void RestLayout::layoutRest(const Rest* item, Rest::LayoutData* ldata, const Lay
             pulseCount = numericPulseMeasurePulseCount(item->measure()->ticks(), item->measure()->timesig());
             availableWidth = item->measure()->width();
         }
-        ldata->setBbox(numericProfile->showEmptyPulses
-                       ? numericPulseEmptyPulseGroupBbox(item->spatium(), pulseCount, availableWidth) : RectF());
+        RectF bbox = numericProfile->showEmptyPulses
+                     ? numericPulseEmptyPulseGroupBbox(item->spatium(), pulseCount, availableWidth) : RectF();
+        if (numericProfile->showEmptyPulses && numericPulseDefaultChordNoteLimit(item->staff(), item->tick()) > 1) {
+            const int rows = numericPulseChordNoteLimit(item->staff(), item->tick());
+            bbox.unite(bbox.translated(0.0, (rows - 1) * numericPulseRowDistance(item->staff(), item->tick())));
+        }
+        ldata->setBbox(bbox);
         if (!item->shouldNotBeDrawn()) {
             fillShape(item, ldata, ctx.conf());
         }

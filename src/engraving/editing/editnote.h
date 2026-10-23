@@ -49,6 +49,7 @@ public:
     static void changeAccidental(Score* score, AccidentalType idx);
     static void changeAccidental(Score* score, Note* note, AccidentalType accidental);
     static void undoChangePitch(Score* score, Note* note, int pitch, int tpc1, int tpc2);
+    static void undoChangeNumericPulseRow(Score* score, Note* note, int row);
     static void undoChangeFretting(Score* score, Note* note, int pitch, int string, int fret, int tpc1, int tpc2);
     static Note* replaceRestWithFirstNumericPulseDegree(Score* score, Rest* rest);
     static Rest* replaceFirstNumericPulseDegreeWithRest(Score* score, Note* note);
@@ -57,6 +58,21 @@ public:
 private:
     static void changeAccidental2(Note* n, int pitch, int tpc);
     static void upDownChromatic(bool up, int pitch, Note* n, Key key, int tpc1, int tpc2, int& newPitch, int& newTpc1, int& newTpc2);
+};
+
+class ChangeNumericPulseRow : public UndoableCommand
+{
+    OBJECT_ALLOCATOR(engraving, ChangeNumericPulseRow)
+
+    Note* note = nullptr;
+    int row = -1;
+
+    void flip() override;
+
+public:
+    ChangeNumericPulseRow(Note* n, int r) : note(n), row(r) {}
+    UNDO_NAME("ChangeNumericPulseRow")
+    UNDO_CHANGED_OBJECTS({ note })
 };
 
 class ChangeVelocity : public UndoableCommand

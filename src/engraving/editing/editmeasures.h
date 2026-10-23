@@ -166,4 +166,23 @@ public:
     UNDO_NAME("ChangeMeasureRepeatCount")
     UNDO_CHANGED_OBJECTS({ m })
 };
+
+class ChangeMeasureNumericPulseChordNoteLimit : public UndoableCommand
+{
+    OBJECT_ALLOCATOR(engraving, ChangeMeasureNumericPulseChordNoteLimit)
+
+    Measure* m = nullptr;
+    int limit = 0;
+    staff_idx_t staffIdx = muse::nidx;
+
+    void flip() override;
+
+public:
+    ChangeMeasureNumericPulseChordNoteLimit(Measure* measure, int noteLimit, staff_idx_t staff)
+        : m(measure), limit(noteLimit), staffIdx(staff) {}
+
+    UNDO_TYPE(CommandType::ChangeMeasureNumericPulseChordNoteLimit)
+    UNDO_NAME("ChangeMeasureNumericPulseChordNoteLimit")
+    UNDO_CHANGED_OBJECTS({ m })
+};
 }

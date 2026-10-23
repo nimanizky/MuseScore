@@ -734,6 +734,7 @@ Note::Note(const Note& n, bool link)
     m_userDotPosition   = n.m_userDotPosition;
     m_fixed             = n.m_fixed;
     m_fixedLine         = n.m_fixedLine;
+    m_numericPulseRow   = n.m_numericPulseRow;
     m_harmonic          = n.m_harmonic;
     m_hasParens         = n.m_hasParens;
     m_hideGeneratedParens = n.m_hideGeneratedParens;
@@ -2686,7 +2687,22 @@ int Note::ppitch() const
         }
     }
 
-    return m_pitch + ottaveCapoFret() + linkedOttavaPitchOffset();
+    int playbackPitchOffset = 0;
+    if (ch) {
+        const Staff* staff = ch->staff();
+        const Fraction tick = ch->tick();
+        const Instrument* instrument = staff && staff->part() ? staff->part()->instrument(tick) : nullptr;
+        if (instrument && numericPulseProfile(staff, tick)
+            && instrument->id().startsWith(u"gender-barung-tuning-")) {
+            // The Gendèr Barung sample maps are one octave below the MIDI
+            // pitches used to write Kepatihan notes. Keep the written pitch
+            // (and its register dots) intact, but trigger the matching sample
+            // an octave lower during playback.
+            playbackPitchOffset = -12;
+        }
+    }
+
+    return m_pitch + playbackPitchOffset + ottaveCapoFret() + linkedOttavaPitchOffset();
 }
 
 //---------------------------------------------------------

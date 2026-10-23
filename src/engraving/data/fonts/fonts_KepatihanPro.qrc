@@ -1,0 +1,5 @@
+<RCC>
+    <qresource prefix="/">
+        <file alias="fonts/kepatihanpro/KepatihanPro.ttf">KepatihanPro.ttf</file>
+    </qresource>
+</RCC>

@@ -20,6 +20,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "scorelayout.h"
+#include "numericpulserendering.h"
 
 #include "dom/score.h"
 #include "dom/masterscore.h"
@@ -49,6 +50,9 @@ public:
 
 void ScoreLayout::layoutRange(Score* score, const Fraction& st, const Fraction& et)
 {
+    // Reuse digit metrics throughout this layout, but do not retain them
+    // across layout passes where font configuration may have changed.
+    clearNumericPulseTextMetricsCache();
     TRACEFUNC;
 
     CmdStateLocker cmdStateLocker(score);

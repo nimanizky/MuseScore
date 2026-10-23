@@ -25,6 +25,10 @@
 #include "dom/score.h"
 #include "dom/page.h"
 #include "dom/engravingitem.h"
+#include "dom/measure.h"
+#include "dom/numericpulseprofile.h"
+#include "dom/staff.h"
+#include "dom/system.h"
 
 #include "tdraw.h"
 #include "debugpaint.h"
@@ -34,6 +38,43 @@
 using namespace muse::draw;
 using namespace mu::engraving;
 using namespace mu::engraving::rendering::score;
+
+static void paintTsiSeparators(Painter* painter, const Page* page)
+{
+    // These are score separators, not the screen-only numeric input rails.
+    // Paint them in both the interactive view and printed/exported pages.
+    painter->save();
+    for (const System* system : page->systems()) {
+        const Measure* measure = system->firstMeasure();
+        if (!measure) {
+            continue;
+        }
+        const Score* score = system->score();
+        staff_idx_t previous = muse::nidx;
+        for (staff_idx_t index = 0; index < system->staves().size(); ++index) {
+            const SysStaff* current = system->staff(index);
+            if (!current->show()) {
+                continue;
+            }
+            const Staff* staff = score->staff(index);
+            if (previous != muse::nidx) {
+                const Staff* preceding = score->staff(previous);
+                if (preceding->part() != staff->part()
+                    && numericPulseProfile(preceding, measure->tick())
+                    && numericPulseProfile(staff, measure->tick())) {
+                    const double y = .5 * (system->staff(previous)->bbox().bottom() + current->y());
+                    const PointF origin = system->pagePos();
+                    painter->setPen(Pen(Color::BLACK, score->style().styleS(Sid::staffLineWidth).val() * staff->spatium(measure->tick()),
+                                        PenStyle::SolidLine, PenCapStyle::FlatCap));
+                    painter->drawLine(PointF(origin.x() + system->leftMargin(), origin.y() + y),
+                                      PointF(origin.x() + system->width(), origin.y() + y));
+                }
+            }
+            previous = index;
+        }
+    }
+    painter->restore();
+}
 
 void Paint::paintScore(Painter* painter, Score* score, const IScoreRenderer::ScorePaintOptions& opt)
 {
@@ -146,6 +187,7 @@ void Paint::paintScore(Painter* painter, Score* score, const IScoreRenderer::Sco
             }
 
             std::vector<EngravingItem*> elements = page->items(drawRect.translated(-pagePos));
+            paintTsiSeparators(painter, page);
             paintItems(*painter, elements, opt);
 
             if (disableClipping) {

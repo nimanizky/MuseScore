@@ -4156,7 +4156,8 @@ void TLayout::layoutNote(const Note* item, Note::LayoutData* ldata)
                                   ? 0 : item->chord()->durationType().hooks();
         noteBBox = numericPulseNoteBbox(numericPulseDegreeText(numericProfile, item->pitch()),
                                         item->magS(), item->spatium(),
-                                        numericPulseRegister(numericProfile, item->pitch()), durationMarks);
+                                        numericPulseRegister(numericProfile, item->pitch()), durationMarks,
+                                        numericProfile->fontFamily);
         ldata->cachedNoteheadSym.set_value(SymId::noSym);
         ldata->cachedSymNull.set_value(SymId::noSym);
     } else if (useTablature) {
@@ -5214,7 +5215,12 @@ void TLayout::layoutForWidth(StaffLines* item, double w, LayoutContext& ctx)
         const StaffType* st = s->staffType(item->measure()->tick());
         dist *= st->lineDistance().val();
         _lines = st->lines();
-        ldata->setPosY(st->yoffset().val() * _spatium);
+        double staffLineY = st->yoffset().val() * _spatium;
+        if (numericPulseDefaultChordNoteLimit(s, item->measure()->tick()) > 1) {
+            _lines = numericPulseChordNoteLimit(s, item->measure()->tick());
+            dist = numericPulseRowDistance(s, item->measure()->tick());
+        }
+        ldata->setPosY(staffLineY);
 //            if (_lines == 1)
 //                  rypos() = 2 * _spatium;
     } else {
@@ -6257,8 +6263,7 @@ void TLayout::layoutTimeSig(const TimeSig* item, TimeSig::LayoutData* ldata, con
     ldata->pn = PointF();
     ldata->pointLargeRightParen = PointF();
 
-    const MStyle& style = item->style();
-    TimeSigPlacement timeSigPlacement = style.styleV(Sid::timeSigPlacement).value<TimeSigPlacement>();
+    TimeSigPlacement timeSigPlacement = item->timeSigPlacement();
     if (timeSigPlacement == TimeSigPlacement::NORMAL) {
         const_cast<TimeSig*>(item)->setSystemFlag(false);
     } else {
@@ -6301,6 +6306,11 @@ void TLayout::layoutTimeSig(const TimeSig* item, TimeSig::LayoutData* ldata, con
     // determine middle staff position:
 
     double yoff = spatium * (numOfLines - 1) * .5 * lineDist;
+    if (staff && numericPulseDefaultChordNoteLimit(staff, tick) > 1) {
+        // Keep the signature between the two default rails, even when this
+        // particular measure has extra composition rows.
+        yoff = numericPulseRowDistance(staff, tick) * .5;
+    }
 
     // C and Ccut are placed at the middle of the staff: use yoff directly
     IEngravingFontPtr font = ctx.engravingFont();
@@ -6417,7 +6427,12 @@ void TLayout::layoutTimeSig(const TimeSig* item, TimeSig::LayoutData* ldata, con
         ldata->setPosY(-top);
     }
 
-    ldata->moveY(item->yPos());
+    if (staff && numericPulseDefaultChordNoteLimit(staff, tick) > 1) {
+        // Composition rows must never affect this fixed default-rail anchor.
+        ldata->setPosY(0.0);
+    } else {
+        ldata->moveY(item->yPos());
+    }
 }
 
 void TLayout::layoutTimeTickAnchor(TimeTickAnchor* item, LayoutContext&)

@@ -42,6 +42,7 @@ muse_module_add_qrc(engraving BIG_RESOURCES
     data/fonts/fonts_Petaluma.qrc
     data/fonts/fonts_FinaleMaestro.qrc
     data/fonts/fonts_FinaleBroadway.qrc
+    data/fonts/fonts_KepatihanPro.qrc
     data/fonts/fonts_Tabulature.qrc
 )
 

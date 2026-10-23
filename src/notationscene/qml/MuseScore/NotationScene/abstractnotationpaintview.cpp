@@ -30,6 +30,15 @@
 
 #include "actions/actiontypes.h"
 #include "engraving/dom/shadownote.h"
+#include "engraving/dom/note.h"
+#include "engraving/dom/chord.h"
+#include "engraving/dom/staff.h"
+#include "engraving/dom/part.h"
+#include "engraving/dom/instrument.h"
+#include "engraving/dom/numericpulseprofile.h"
+#include "kepatihanpitchtargets.h"
+#include "kepatihangenderreference.h"
+#include "notationscene/kepatihantranslation.h"
 
 #include "notation/inotationaccessibility.h" // IWYU pragma: keep
 #include "notation/inotationautomation.h"
@@ -116,6 +125,10 @@ void AbstractNotationPaintView::load()
     m_loopOutMarker = std::make_unique<LoopMarker>(LoopBoundaryType::LoopOut, iocContext());
 
     m_continuousPanel = std::make_unique<ContinuousPanel>();
+    KepatihanTranslation::changed().onNotify(this, [this]() {
+        clearPitchPreview();
+        update(); // Enabling must show the current selection even if no panel existed.
+    });
 
     //! NOTE For diagnostic tools
     if (!dispatcher()->isReg(this)) {
@@ -261,6 +274,7 @@ bool AbstractNotationPaintView::canReceiveAction(const ActionCode& actionCode) c
 void AbstractNotationPaintView::onCurrentNotationChanged()
 {
     TRACEFUNC;
+    clearPitchPreview();
 
     if (m_notation) {
         onUnloadNotation(m_notation);
@@ -312,7 +326,10 @@ void AbstractNotationPaintView::onLoadNotation(INotationPtr)
     });
 
     interaction->selectionChanged().onNotify(this, [this]() {
-        scheduleRedraw();
+        // Redraw the full view so both the old and new preview panels are covered.
+        if (KepatihanTranslation::enabled() || !m_pitchPreviewNotes.empty()) {
+            update();
+        }
     });
 
     interaction->showItemRequested().onReceive(this, [this](const INotationInteraction::ShowItemRequest& request) {
@@ -620,6 +637,7 @@ void AbstractNotationPaintView::onNoteInputStateChanged()
     TRACEFUNC;
 
     setAcceptHoverEvents(isNoteEnterMode());
+    clearPitchPreview();
     updateLoopMarkers();
     updateShadowNoteVisibility();
     scheduleRedraw();
@@ -778,6 +796,147 @@ void AbstractNotationPaintView::paint(QPainter* qp)
         opt.invertColors = notationConfiguration()->shouldInvertScore();
         m_continuousPanel->paint(*painter, nvCtx, opt);
     }
+    if (!isPrinting && !isAutomation) {
+        updatePitchPreview();
+        if (!m_pitchPreviewNotes.empty()) {
+            paintPitchPreview(qp);
+        }
+    }
+}
+
+void AbstractNotationPaintView::clearPitchPreview()
+{
+    if (m_pitchPreviewNotes.empty()) {
+        return;
+    }
+    m_pitchPreviewNotes.clear();
+    update();
+}
+
+void AbstractNotationPaintView::updatePitchPreview()
+{
+    m_pitchPreviewNotes.clear();
+    const auto selection = notationSelection();
+    if (!KepatihanTranslation::enabled() || publishMode() || m_readonly || !selection || selection->isRange()) {
+        return;
+    }
+    // Read the highlighted notes directly, including during note entry. Rebuild
+    // on each paint so pitch edits and scrolling cannot leave stale previews.
+    const auto notes = selection->notes();
+    for (const auto* note : notes) {
+        const auto* profile = engraving::numericPulseProfile(note->staff(), note->tick());
+        if (!profile) {
+            continue;
+        }
+        if (m_pitchPreviewNotes.empty()) {
+            m_pitchPreviewPosition = fromLogical(note->canvasBoundingRect()).bottomRight().toQPointF();
+        }
+        PitchPreviewNote preview;
+        preview.pitch = note->ppitch();
+        const auto* instrument = note->part()->instrument(note->tick());
+        if (instrument->id().startsWith(u"gender-barung-tuning-")) {
+            const auto* degree = profile->degreeForPitch(note->pitch());
+            const auto* reference = degree ? kepatihanGenderReference(instrument->id().toStdString(), degree->number,
+                                                                      engraving::numericPulseRegister(profile, note->pitch())) : nullptr;
+            if (reference) {
+                // PDF degree/register labels are a display-only reference. Do
+                // not remap the score pitch, instrument, or playback pitch.
+                preview.pitch = reference->pitch;
+                preview.cents = reference->cents;
+                preview.targetKnown = true;
+            }
+        } else {
+            for (const auto& target : KEPATIHAN_PITCH_TARGETS) {
+                if (instrument->id() == String::fromUtf8(target.instrument) && target.key == preview.pitch) {
+                    preview.pitch = target.pitch;
+                    preview.cents = target.cents;
+                    preview.targetKnown = true;
+                    break;
+                }
+            }
+        }
+        m_pitchPreviewNotes.push_back(preview);
+        if (m_pitchPreviewNotes.size() == 9) {
+            break;
+        }
+    }
+}
+
+void AbstractNotationPaintView::paintPitchPreview(QPainter* painter)
+{
+    // Screen-space overlay only: never part of the score or its export painting.
+    painter->save();
+    painter->resetTransform();
+    // Score painting can leave a page clip in place; the overlay lives in view
+    // coordinates, not page coordinates. The paint device still clips to view.
+    painter->setClipping(false);
+    painter->setRenderHint(QPainter::Antialiasing);
+    const qreal panelWidth = 285;
+    const qreal rowHeight = 86;
+    const qreal panelHeight = 32 + rowHeight * m_pitchPreviewNotes.size();
+    // Enlarge the entire preview together: staff, symbols, spacing and labels.
+    // Fit long chord previews inside the view rather than cutting off notes.
+    const qreal previewScale = qMax(0.5, qMin(1.75, qMin((width() - 24) / panelWidth,
+                                                       (height() - 24) / panelHeight)));
+    const qreal x = qMax(0.0, qMin(m_pitchPreviewPosition.x() + 18, width() - panelWidth * previewScale));
+    const qreal y = qMax(0.0, qMin(m_pitchPreviewPosition.y() + 18, height() - panelHeight * previewScale));
+    painter->translate(x, y);
+    painter->scale(previewScale, previewScale);
+    painter->setPen(QColor("#888888"));
+    painter->setBrush(QColor("#fffdf5"));
+    painter->drawRoundedRect(QRectF(0, 0, panelWidth, panelHeight), 6, 6);
+    painter->setPen(Qt::black);
+    QFont font = painter->font();
+    font.setPixelSize(12);
+    painter->setFont(font);
+    painter->drawText(QPointF(12, 20), tr("Western pitch · tuning target"));
+    static constexpr int STEPS[] = { 0, 0, 1, 1, 2, 3, 3, 4, 4, 5, 5, 6 };
+    static const char* NAMES[] = { "C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B" };
+    int row = 0;
+    for (const auto& note : m_pitchPreviewNotes) {
+        const int pc = (note.pitch % 12 + 12) % 12;
+        const int octave = note.pitch / 12 - 1;
+        const bool bass = note.pitch < 60;
+        const int bottomStep = bass ? 2 * 7 + 4 : 4 * 7 + 2; // G2 / E4
+        const qreal top = 36 + row++ * rowHeight;
+        const qreal bottom = top + 40;
+        const int step = octave * 7 + STEPS[pc] - bottomStep;
+        const qreal noteY = bottom - step * 5;
+        // Octave-transposing clefs keep extreme registers within a compact preview.
+        const int octaveShift = step < -4 ? (step + 4) / 7 - 1 : step > 12 ? (step - 6) / 7 : 0;
+        const qreal displayedY = noteY + octaveShift * 35;
+        for (int line = 0; line < 5; ++line) {
+            painter->drawLine(QPointF(12, top + line * 10), QPointF(116, top + line * 10));
+        }
+        QFont clefFont = font;
+        clefFont.setFamily("Leland");
+        clefFont.setPixelSize(34);
+        painter->setFont(clefFont);
+        painter->drawText(QPointF(16, bass ? top + 10 : bottom - 10), QString(QChar(bass ? 0xe062 : 0xe050)));
+        painter->setFont(font);
+        if (octaveShift != 0) {
+            painter->drawText(QPointF(15, top - 2), QString::number(qAbs(octaveShift) * 7 + 1)
+                              + (octaveShift > 0 ? tr(" above") : tr(" below")));
+        }
+        for (qreal ledger = bottom + 10; ledger <= displayedY + 1; ledger += 10) {
+            painter->drawLine(QPointF(70, ledger), QPointF(94, ledger));
+        }
+        for (qreal ledger = top - 10; ledger >= displayedY - 1; ledger -= 10) {
+            painter->drawLine(QPointF(70, ledger), QPointF(94, ledger));
+        }
+        painter->setBrush(Qt::black);
+        painter->drawEllipse(QRectF(76, displayedY - 4, 12, 8));
+        painter->drawLine(QPointF(88, displayedY), QPointF(88, displayedY - 24));
+        if (pc == 1 || pc == 3 || pc == 6 || pc == 8 || pc == 10) {
+            painter->drawText(QPointF(61, displayedY + 4), QString::fromUtf8("♯"));
+        }
+        const QString pitchName = QString::fromUtf8(NAMES[pc]) + QString::number(octave);
+        const QString deviation = note.targetKnown
+                                  ? QString("%1%2¢").arg(note.cents > 0 ? "+" : "").arg(note.cents, 0, 'f', 0)
+                                  : tr("cents unavailable");
+        painter->drawText(QPointF(125, displayedY + 4), pitchName + "  " + deviation);
+    }
+    painter->restore();
 }
 
 void AbstractNotationPaintView::onNotationSetup()
@@ -1288,6 +1447,7 @@ void AbstractNotationPaintView::pinchToZoom(qreal scaleFactor, const QPointF& po
 
 void AbstractNotationPaintView::wheelEvent(QWheelEvent* event)
 {
+    clearPitchPreview();
     TRACEFUNC;
     if (isInited()) {
         m_inputController->wheelEvent(event);
@@ -1314,6 +1474,7 @@ void AbstractNotationPaintView::onElementPopupIsOpenChanged(const PopupModelType
 
 void AbstractNotationPaintView::mousePressEvent(QMouseEvent* event)
 {
+    clearPitchPreview();
     TRACEFUNC;
     forceFocusIn();
 
@@ -1372,6 +1533,7 @@ bool AbstractNotationPaintView::shortcutOverride(QKeyEvent* event)
 
 void AbstractNotationPaintView::keyPressEvent(QKeyEvent* event)
 {
+    clearPitchPreview();
     if (isInited()) {
         m_inputController->keyPressEvent(event);
     }

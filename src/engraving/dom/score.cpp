@@ -27,6 +27,7 @@
 
 #include "score.h"
 
+#include <algorithm>
 #include <cmath>
 #include <map>
 
@@ -79,6 +80,7 @@
 #include "measure.h"
 #include "mscore.h"
 #include "note.h"
+#include "numericpulseprofile.h"
 #include "ottava.h"
 #include "page.h"
 #include "palmmute.h"
@@ -998,6 +1000,7 @@ static Segment* getNextValidInputSegment(Segment* segment, track_idx_t track, vo
 
 bool Score::getPosition(Position* pos, const PointF& p, voice_idx_t voice) const
 {
+    pos->numericPulseRow = -1;
     System* preferredSystem = nullptr;
     staff_idx_t preferredStaffIdx = muse::nidx;
     const double spacingFactor = 0.5;
@@ -1129,6 +1132,15 @@ bool Score::getPosition(Position* pos, const PointF& p, voice_idx_t voice) const
     //
     const Staff* s      = staff(pos->staffIdx);
     const Fraction tick = segment->tick();
+    if (numericPulseDefaultChordNoteLimit(s, tick) > 1) {
+        const double rowDistance = numericPulseRowDistance(s, tick);
+        const double staffY = sstaff->y() + s->staffType(tick)->yoffset().val() * s->staffType(tick)->spatium();
+        const int rowCount = numericPulseChordNoteLimit(s, tick);
+        pos->numericPulseRow = std::clamp(int(std::lround((pppp.y() - staffY) / rowDistance)), 0, rowCount - 1);
+        pos->line = 0;
+        pos->pos = PointF(x, staffY + pos->numericPulseRow * rowDistance) + measure->canvasPos();
+        return true;
+    }
     const double mag     = s->staffMag(tick);
     // in TABs, step from one string to another; in other staves, step on and between lines
     double lineDist = s->staffType(tick)->lineDistance().val()

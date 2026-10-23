@@ -2363,10 +2363,10 @@ void TDraw::draw(const Note* item, Painter* painter, const PaintOptions& opt)
     const NumericPulseProfile* numericProfile = numericPulseProfile(item->staff(), item->tick());
     if (numericProfile) {
         const String text = numericPulseDegreeText(numericProfile, item->pitch());
-        painter->setFont(numericPulseFont(item->magS()));
-        painter->drawText(PointF(numericPulseTextOriginX(text, item->magS()), 0.0), text);
+        painter->setFont(numericPulseFont(item->magS(), numericProfile->fontFamily));
+        painter->drawText(PointF(numericPulseTextOriginX(text, item->magS(), numericProfile->fontFamily), 0.0), text);
 
-        const RectF textBbox = numericPulseTextBbox(text, item->magS());
+        const RectF textBbox = numericPulseTextBbox(text, item->magS(), numericProfile->fontFamily);
         const int registerOffset = numericPulseRegister(numericProfile, item->pitch());
         if (registerOffset != 0) {
             painter->save();
@@ -2382,7 +2382,8 @@ void TDraw::draw(const Note* item, Painter* painter, const PaintOptions& opt)
         const int durationMarks = numericProfile->durationMarksAbove && chord && !chord->beam()
                                   ? chord->durationType().hooks() : 0;
         if (durationMarks > 0) {
-            const RectF glyphBbox = numericPulseGlyphBbox(text, item->magS(), item->spatium(), registerOffset);
+            const RectF glyphBbox = numericPulseGlyphBbox(text, item->magS(), item->spatium(), registerOffset,
+                                                          numericProfile->fontFamily);
             const double width = numericPulseDurationMarkWidth(textBbox, item->spatium());
             painter->setPen(Pen(item->curColor(opt), numericPulseRhythmMarkThickness(item->spatium()),
                                 PenStyle::SolidLine, PenCapStyle::FlatCap));
@@ -2635,8 +2636,14 @@ void TDraw::draw(const Rest* item, Painter* painter, const PaintOptions& opt)
             painter->save();
             painter->setBrush(item->curColor(opt));
             painter->setNoPen();
-            for (int pulseIndex = 0; pulseIndex < pulseCount; ++pulseIndex) {
-                painter->drawEllipse(numericPulseEmptyPulseBbox(item->spatium(), pulseIndex, pulseCount, availableWidth));
+            const bool multipleRows = numericPulseDefaultChordNoteLimit(item->staff(), item->tick()) > 1;
+            const int rowCount = multipleRows ? numericPulseChordNoteLimit(item->staff(), item->tick()) : 1;
+            const double rowDistance = multipleRows ? numericPulseRowDistance(item->staff(), item->tick()) : 0.0;
+            for (int row = 0; row < rowCount; ++row) {
+                for (int pulseIndex = 0; pulseIndex < pulseCount; ++pulseIndex) {
+                    painter->drawEllipse(numericPulseEmptyPulseBbox(item->spatium(), pulseIndex, pulseCount, availableWidth)
+                                         .translated(0.0, row * rowDistance));
+                }
             }
             painter->restore();
         }
@@ -2826,11 +2833,16 @@ void TDraw::draw(const Spacer* item, Painter* painter, const PaintOptions& opt)
 void TDraw::draw(const StaffLines* item, Painter* painter, const PaintOptions& opt)
 {
     TRACE_DRAW_ITEM;
+    const bool compositionGuides = numericPulseProfile(item->staff(), item->tick()) != nullptr;
+    if (compositionGuides && opt.isPrinting) {
+        return;
+    }
     painter->save();
 
     setMask(item, painter);
 
-    painter->setPen(Pen(item->curColor(opt), item->lw(), PenStyle::SolidLine, PenCapStyle::FlatCap));
+    const Color lineColor = compositionGuides ? item->configuration()->invisibleColor() : item->curColor(opt);
+    painter->setPen(Pen(lineColor, item->lw(), PenStyle::SolidLine, PenCapStyle::FlatCap));
     painter->drawLines(item->lines());
 
     painter->restore();
@@ -3220,14 +3232,6 @@ void TDraw::draw(const TieSegment* item, Painter* painter, const PaintOptions& o
     TRACE_DRAW_ITEM;
 
     const Tie* tie = item->tie();
-    const Note* startNote = tie ? tie->startNote() : nullptr;
-    if (startNote && numericPulseProfile(startNote->staff(), startNote->tick())) {
-        // Numeric Pulse does not use the Western curved tie glyph. Keep the Tie
-        // object in the score, but leave its future continuation representation
-        // to the numeric rhythm grammar.
-        return;
-    }
-
     // hide tie toward the second chord of a cross-measure value
     if (tie->endNote() && tie->endNote()->chord()->crossMeasure() == CrossMeasure::SECOND) {
         return;

@@ -163,6 +163,9 @@ void MeasureRead::readMeasure(Measure* measure, XmlReader& e, ReadContext& ctx, 
             measure->mstaves()[staffIdx]->setHideIfEmpty(TConv::fromXml(e.readAsciiText(), AutoOnOff::AUTO));
         } else if (tag == "measureRepeatCount") {
             measure->setMeasureRepeatCount(e.readInt(), staffIdx);
+        } else if (tag == "numericPulseChordNoteLimit") {
+            const int limit = e.readInt();
+            measure->setNumericPulseChordNoteLimit(limit >= 3 && limit <= 9 ? limit : 0, staffIdx);
         } else if (tag == "SystemDivider") {
             SystemDivider* sd = new SystemDivider(ctx.dummy()->system());
             TRead::read(sd, e, ctx);

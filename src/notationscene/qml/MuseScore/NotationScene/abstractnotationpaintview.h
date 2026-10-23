@@ -285,6 +285,17 @@ private:
 
     bool m_loadCalled = false;
     std::unique_ptr<NotationViewInputController> m_inputController;
+    struct PitchPreviewNote {
+        int pitch = 0;
+        double cents = 0;
+        bool targetKnown = false;
+    };
+    std::vector<PitchPreviewNote> m_pitchPreviewNotes;
+    QPointF m_pitchPreviewPosition;
+    void clearPitchPreview();
+    void updatePitchPreview();
+    void paintPitchPreview(QPainter* painter);
+    friend class KepatihanPitchPreviewTests;
     QQuickItem* m_automationLinesContainer = nullptr;
     std::unique_ptr<NotationAutomationController> m_notationAutomationController;
     std::unique_ptr<PlaybackCursor> m_playbackCursor;

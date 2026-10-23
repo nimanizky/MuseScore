@@ -28,6 +28,7 @@
 #include "../dom/chordrest.h"
 #include "../dom/chord.h"
 #include "../dom/note.h"
+#include "../dom/numericpulseprofile.h"
 #include "../dom/score.h"
 #include "../dom/staff.h"
 #include "../dom/stem.h"
@@ -1293,6 +1294,13 @@ int BeamTremoloLayout::getBeamCount(const BeamBase::LayoutData* ldata, const std
 double BeamTremoloLayout::chordBeamAnchorX(const BeamBase::LayoutData* ldata, const ChordRest* cr, ChordBeamAnchorType anchorType)
 {
     double pagePosX = ldata->trem ? ldata->trem->pagePos().x() : ldata->beam ? ldata->beam->pagePos().x() : 0.0;
+    if (ldata->beam && numericPulseProfile(cr->staff(), cr->tick())) {
+        // Kepatihan digits are centered at the note origin. Western stem
+        // anchors sit on the right edge and shift subdivision bars rightward.
+        return cr->isChord() && toChord(cr)->upNote()
+               ? toChord(cr)->upNote()->pagePos().x() - pagePosX
+               : cr->pagePos().x() - pagePosX;
+    }
     double stemPosX = StemLayout::stemPosX(cr) + cr->pagePos().x() - pagePosX;
 
     if (!cr->isChord() || !toChord(cr)->stem()) {

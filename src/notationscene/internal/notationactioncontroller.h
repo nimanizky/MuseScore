@@ -198,6 +198,7 @@ private:
     void convertToGamelan();
     void convertToKepatihan(const muse::String& profileId);
     void convertToKepatihan(const muse::String& profileId, const muse::String& instrumentName, const muse::String& tuningLabel);
+    void setNumericPulseChordNoteLimit(const muse::actions::ActionData& args);
     void openPartsDialog();
     void openTupletOtherDialog();
     void openStaffTextPropertiesDialog();
