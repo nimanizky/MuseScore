@@ -12,7 +12,7 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 180
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
       - name: Apply local framework fixes
@@ -33,7 +33,14 @@ jobs:
         run: buildscripts\ci\windows\setup.bat
       - name: Install MSI packaging tools
         shell: pwsh
-        run: choco install wixtoolset --version=3.14.1 -y --no-progress
+        run: |
+          $wix = Get-ChildItem 'C:/Program Files (x86)' -Directory -Filter 'WiX Toolset v3*' | Where-Object { Test-Path "$($_.FullName)/bin/candle.exe" } | Select-Object -First 1
+          if ($wix) {
+            Write-Host "Using installed WiX: $($wix.FullName)"
+          } else {
+            choco install wixtoolset --version=3.14.1.20250415 -y --no-progress
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
       - name: Configure build metadata
         shell: bash
         run: |
