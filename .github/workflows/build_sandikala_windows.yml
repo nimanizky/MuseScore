@@ -1,6 +1,10 @@
 name: Build Sandikala Windows installer
 on:
   workflow_dispatch:
+  push:
+    branches: [distribution/windows-x64-20261120]
+    paths:
+      - .github/workflows/build_sandikala_windows.yml
 permissions:
   contents: read
 jobs:
