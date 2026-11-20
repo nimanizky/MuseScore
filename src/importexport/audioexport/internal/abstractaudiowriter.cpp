@@ -169,7 +169,7 @@ void AbstractAudioWriter::doWrite(io::IODevice& dstDevice, const SoundTrackForma
     playback->saveSoundTrackProgressChanged()
     .onReceive(this, [sendProgress](int64_t current, int64_t total, SaveSoundTrackStage stage) {
         sendProgress(current, total, stage);
-    });
+    }, muse::async::Asyncable::Mode::SetReplace);
 
     playback->saveSoundTrack(std::move(format), dstDevice)
     .onResolve(this, [this, playback, restorePlaybackState](const bool /*result*/) {

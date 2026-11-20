@@ -135,6 +135,22 @@ void PartListModel::createNewPart()
     insertNewExcerpt(index, newExcerpt);
 }
 
+void PartListModel::combineSelectedParts()
+{
+    ExcerptNotationList sources;
+    for (int row : m_selectionModel->selectedRows()) {
+        if (isExcerptIndexValid(row) && !m_excerpts[row]->isEmpty()) {
+            sources.push_back(m_excerpts[row]);
+        }
+    }
+    if (sources.empty()) {
+        return;
+    }
+    const QString name = mu::engraving::formatUniqueExcerptName(
+        muse::mtrc("notation", "Player part"), collectExcerptLowerNames(m_excerpts)).toQString();
+    insertNewExcerpt(m_excerpts.size(), masterNotation()->createPlayerExcerpt(name, sources));
+}
+
 void PartListModel::selectPart(int partIndex)
 {
     if (!isExcerptIndexValid(partIndex)) {

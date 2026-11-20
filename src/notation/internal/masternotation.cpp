@@ -719,6 +719,39 @@ void MasterNotation::onPartsChanged()
     m_potentialExcerptsForcedDirty = true;
 }
 
+IExcerptNotationPtr MasterNotation::createPlayerExcerpt(const QString& name, const ExcerptNotationList& sources) const
+{
+    auto result = createEmptyExcerpt(name);
+    Excerpt* excerpt = get_impl(result)->excerpt();
+    std::vector<Part*> parts;
+    for (const auto& source : sources) {
+        for (Part* part : get_impl(source)->excerpt()->parts()) {
+            if (std::find(parts.begin(), parts.end(), part) == parts.end()) {
+                parts.push_back(part);
+            }
+        }
+    }
+    // Keep the instruments in score order regardless of selection order.
+    std::vector<Part*> ordered;
+    for (Part* part : masterScore()->parts()) {
+        if (std::find(parts.begin(), parts.end(), part) != parts.end()) {
+            ordered.push_back(part);
+        }
+    }
+    excerpt->setParts(ordered);
+    masterScore()->initExcerpt(excerpt);
+    Score* score = excerpt->excerptScore();
+    score->style().set(Sid::hideEmptyStaves, true);
+    score->style().set(Sid::dontHideStavesInFirstSystem, false);
+    score->style().set(Sid::createMultiMeasureRests, false);
+    for (Staff* staff : score->staves()) {
+        staff->setCutaway(true);
+        staff->setHideWhenEmpty(AutoOnOff::ON);
+    }
+    score->setLayoutAll();
+    return result;
+}
+
 IExcerptNotationPtr MasterNotation::createEmptyExcerpt(const QString& name) const
 {
     auto excerptNotation

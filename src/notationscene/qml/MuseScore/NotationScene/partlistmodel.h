@@ -57,6 +57,7 @@ public:
 
     Q_INVOKABLE void load();
     Q_INVOKABLE void createNewPart();
+    Q_INVOKABLE void combineSelectedParts();
     Q_INVOKABLE void openSelectedParts();
     Q_INVOKABLE void openAllParts();
 

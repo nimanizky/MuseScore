@@ -18446,6 +18446,72 @@
             </Instrument>
             </Instrument>
             SLENDRO_DISABLED_END -->
+            <Instrument id="gong-kemodong-1-original-tuning">
+                  <family>gamelan</family>
+                  <soundId>percussions.gong-kemodong-1-original-tuning</soundId>
+                  <trackName>Gong Kemodong 1 (Original Tuning)</trackName>
+                  <longName>Gong Kemodong 1 (Original Tuning)</longName>
+                  <shortName>GK 1 Orig.</shortName>
+                  <description>Original recorded tuning: very-low 3, 5, 6, 7 and low 1, 2. Other pitches have no recorded samples.</description>
+                  <musicXMLid>metal.gong</musicXMLid>
+                  <numericPulse id="gong-kemodong-1-original-tuning">
+                        <fixedBaseline>1</fixedBaseline>
+                        <monophonic>1</monophonic>
+                        <showEmptyPulses>1</showEmptyPulses>
+                        <durationMarksAbove>1</durationMarksAbove>
+                        <minimumRegister>-2</minimumRegister>
+                        <maximumRegister>-1</maximumRegister>
+                        <defaultRegister>-1</defaultRegister>
+                        <degree number="1" pitch="62" inputStep="28" inputIndex="0" action="note-c" register="-1">1</degree>
+                        <degree number="2" pitch="63" inputStep="29" inputIndex="1" action="note-d" register="-1">2</degree>
+                        <degree number="3" pitch="66" inputStep="30" inputIndex="2" action="note-e" register="-2">3</degree>
+                        <degree number="5" pitch="69" inputStep="32" inputIndex="4" action="note-g" register="-2">5</degree>
+                        <degree number="6" pitch="70" inputStep="33" inputIndex="5" action="note-a" register="-2">6</degree>
+                        <degree number="7" pitch="73" inputStep="34" inputIndex="6" action="note-b" register="-2">7</degree>
+                  </numericPulse>
+                  <stafftype staffTypePreset="stdNumericPulse">pitched</stafftype>
+                  <clef>F</clef>
+                  <barlineSpan>1</barlineSpan>
+                  <aPitchRange>42-51</aPitchRange>
+                  <pPitchRange>42-51</pPitchRange>
+                  <singleNoteDynamics>0</singleNoteDynamics>
+                  <Channel><program value="0"/></Channel>
+                  <genre>common</genre>
+                  <genre>world</genre>
+            </Instrument>
+            <Instrument id="gong-kemodong-2-original-tuning">
+                  <family>gamelan</family>
+                  <soundId>percussions.gong-kemodong-2-original-tuning</soundId>
+                  <trackName>Gong Kemodong 2 (Original Tuning)</trackName>
+                  <longName>Gong Kemodong 2 (Original Tuning)</longName>
+                  <shortName>GK 2 Orig.</shortName>
+                  <description>Original recorded tuning: very-low 3, 5, 6, 7 and low 1, 2. Other pitches have no recorded samples.</description>
+                  <musicXMLid>metal.gong</musicXMLid>
+                  <numericPulse id="gong-kemodong-2-original-tuning">
+                        <fixedBaseline>1</fixedBaseline>
+                        <monophonic>1</monophonic>
+                        <showEmptyPulses>1</showEmptyPulses>
+                        <durationMarksAbove>1</durationMarksAbove>
+                        <minimumRegister>-2</minimumRegister>
+                        <maximumRegister>-1</maximumRegister>
+                        <defaultRegister>-1</defaultRegister>
+                        <degree number="1" pitch="62" inputStep="28" inputIndex="0" action="note-c" register="-1">1</degree>
+                        <degree number="2" pitch="64" inputStep="29" inputIndex="1" action="note-d" register="-1">2</degree>
+                        <degree number="3" pitch="65" inputStep="30" inputIndex="2" action="note-e" register="-2">3</degree>
+                        <degree number="5" pitch="68" inputStep="32" inputIndex="4" action="note-g" register="-2">5</degree>
+                        <degree number="6" pitch="71" inputStep="33" inputIndex="5" action="note-a" register="-2">6</degree>
+                        <degree number="7" pitch="72" inputStep="34" inputIndex="6" action="note-b" register="-2">7</degree>
+                  </numericPulse>
+                  <stafftype staffTypePreset="stdNumericPulse">pitched</stafftype>
+                  <clef>F</clef>
+                  <barlineSpan>1</barlineSpan>
+                  <aPitchRange>41-52</aPitchRange>
+                  <pPitchRange>41-52</pPitchRange>
+                  <singleNoteDynamics>0</singleNoteDynamics>
+                  <Channel><program value="0"/></Channel>
+                  <genre>common</genre>
+                  <genre>world</genre>
+            </Instrument>
             <Instrument id="gong-kemodong-pelog">
                   <family>gamelan</family>
                   <trackName>Gong Kemodong</trackName>

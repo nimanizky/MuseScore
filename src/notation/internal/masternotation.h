@@ -53,6 +53,7 @@ public:
     INotationPtr notation() override;
     int mscVersion() const override;
 
+    IExcerptNotationPtr createPlayerExcerpt(const QString& name, const ExcerptNotationList& sources) const override;
     IExcerptNotationPtr createEmptyExcerpt(const QString& name = QString()) const override;
 
     const ExcerptNotationList& excerpts() const override;

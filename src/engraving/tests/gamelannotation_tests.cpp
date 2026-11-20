@@ -245,7 +245,7 @@ TEST(Engraving_GamelanNotationTests, RequestedPelogInstrumentProfilesAreAvailabl
         std::vector<int> degrees;
     };
 
-    const std::array<ExpectedProfile, 9> expectedProfiles { {
+    const std::array<ExpectedProfile, 11> expectedProfiles { {
         { u"saron-pelog", { 1, 2, 3, 4, 5, 6, 7 } },
         { u"gender-pelog", { 1, 2, 3, 4, 5, 6, 7 } },
         { u"gambang-pelog", { 1, 2, 3, 4, 5, 6, 7 } },
@@ -253,6 +253,8 @@ TEST(Engraving_GamelanNotationTests, RequestedPelogInstrumentProfilesAreAvailabl
         { u"suling-pelog", { 1, 2, 3, 4, 5, 6, 7 } },
         { u"siter-pelog", { 1, 2, 3, 4, 5, 6, 7 } },
         { u"gong-kemodong-pelog", { 5, 6 } },
+        { u"gong-kemodong-1-original-tuning", { 1, 2, 3, 5, 6, 7 } },
+        { u"gong-kemodong-2-original-tuning", { 1, 2, 3, 5, 6, 7 } },
         { u"gong-ageng-pelog", { 6 } },
         { u"kempul-pelog", { 1, 3, 5, 6, 7 } }
     } };
@@ -271,6 +273,91 @@ TEST(Engraving_GamelanNotationTests, RequestedPelogInstrumentProfilesAreAvailabl
         for (size_t i = 0; i < expected.degrees.size(); ++i) {
             EXPECT_EQ(profile.degrees[i].number, expected.degrees[i]);
         }
+    }
+}
+
+TEST(Engraving_GamelanNotationTests, GongKemodongOriginalSampleRegisters)
+{
+    const InstrumentTemplate* instrument = searchTemplate(u"gong-kemodong-1-original-tuning");
+    ASSERT_NE(instrument, nullptr);
+    const NumericPulseProfile& profile = instrument->numericPulseProfile;
+    ASSERT_TRUE(profile.isValid());
+    EXPECT_EQ(profile.degreeForNumber(4), nullptr);
+    struct Sample { int degree; int registerOffset; int key; };
+    const Sample samples[] = { { 3, -2, 42 }, { 5, -2, 45 }, { 6, -2, 46 },
+                               { 7, -2, 49 }, { 1, -1, 50 }, { 2, -1, 51 } };
+    for (const Sample& sample : samples) {
+        const NumericPulseDegree* degree = profile.degreeForNumber(sample.degree);
+        ASSERT_NE(degree, nullptr);
+        ASSERT_TRUE(degree->fixedRegister.has_value());
+        EXPECT_EQ(*degree->fixedRegister, sample.registerOffset);
+        EXPECT_EQ(numericPulsePitch(&profile, degree, sample.registerOffset), sample.key);
+        EXPECT_EQ(numericPulsePitch(&profile, degree, sample.registerOffset == -1 ? -2 : -1), -1);
+        EXPECT_EQ(numericPulseRegister(&profile, sample.key), sample.registerOffset);
+        ASSERT_NE(profile.degreeForPitch(sample.key), nullptr);
+        EXPECT_EQ(profile.degreeForPitch(sample.key)->number, sample.degree);
+    }
+}
+
+TEST(Engraving_GamelanNotationTests, GongKemodongEntryUsesRecordedRegisters)
+{
+    for (const auto& [degree, key] : std::vector<std::pair<int, int>> { { 1, 50 }, { 2, 51 }, { 3, 42 },
+                                                                    { 5, 45 }, { 6, 46 }, { 7, 49 } }) {
+        MasterScore* score = makeNumericPulseScore(u"gong-kemodong-1-original-tuning");
+        ASSERT_NE(score, nullptr);
+        enterDegree(score, degree);
+        Chord* chord = score->firstMeasure()->findChord(Fraction(0, 1), 0);
+        ASSERT_NE(chord, nullptr) << degree;
+        EXPECT_EQ(chord->upNote()->pitch(), key) << degree;
+        if (degree == 3) {
+            const String path = u"gong-kemodong-original-roundtrip.mscx";
+            ASSERT_TRUE(ScoreRW::saveScore(score, path));
+            MasterScore* reopened = ScoreRW::readScore(path, true);
+            ASSERT_NE(reopened, nullptr);
+            const auto* profile = numericPulseProfile(reopened->staff(0), Fraction(0, 1));
+            ASSERT_NE(profile, nullptr);
+            ASSERT_NE(profile->degreeForNumber(3), nullptr);
+            EXPECT_EQ(profile->degreeForNumber(3)->fixedRegister, std::optional<int>(-2));
+            delete reopened;
+        }
+        delete score;
+    }
+}
+
+TEST(Engraving_GamelanNotationTests, GongKemodong2OriginalSampleRegisters)
+{
+    const InstrumentTemplate* instrument = searchTemplate(u"gong-kemodong-2-original-tuning");
+    ASSERT_NE(instrument, nullptr);
+    const NumericPulseProfile& profile = instrument->numericPulseProfile;
+    ASSERT_TRUE(profile.isValid());
+    EXPECT_EQ(profile.degreeForNumber(4), nullptr);
+    struct Sample { int degree; int registerOffset; int key; };
+    const Sample samples[] = { { 3, -2, 41 }, { 5, -2, 44 }, { 6, -2, 47 },
+                               { 7, -2, 48 }, { 1, -1, 50 }, { 2, -1, 52 } };
+    for (const Sample& sample : samples) {
+        const NumericPulseDegree* degree = profile.degreeForNumber(sample.degree);
+        ASSERT_NE(degree, nullptr);
+        ASSERT_TRUE(degree->fixedRegister.has_value());
+        EXPECT_EQ(*degree->fixedRegister, sample.registerOffset);
+        EXPECT_EQ(numericPulsePitch(&profile, degree, sample.registerOffset), sample.key);
+        EXPECT_EQ(numericPulsePitch(&profile, degree, sample.registerOffset == -1 ? -2 : -1), -1);
+        EXPECT_EQ(numericPulseRegister(&profile, sample.key), sample.registerOffset);
+        ASSERT_NE(profile.degreeForPitch(sample.key), nullptr);
+        EXPECT_EQ(profile.degreeForPitch(sample.key)->number, sample.degree);
+    }
+}
+
+TEST(Engraving_GamelanNotationTests, GongKemodong2EntryUsesRecordedRegisters)
+{
+    for (const auto& [degree, key] : std::vector<std::pair<int, int>> { { 1, 50 }, { 2, 52 }, { 3, 41 },
+                                                                    { 5, 44 }, { 6, 47 }, { 7, 48 } }) {
+        MasterScore* score = makeNumericPulseScore(u"gong-kemodong-2-original-tuning");
+        ASSERT_NE(score, nullptr);
+        enterDegree(score, degree);
+        Chord* chord = score->firstMeasure()->findChord(Fraction(0, 1), 0);
+        ASSERT_NE(chord, nullptr) << degree;
+        EXPECT_EQ(chord->upNote()->pitch(), key) << degree;
+        delete score;
     }
 }
 

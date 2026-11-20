@@ -20,6 +20,8 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include <gmock/gmock.h>
+#include <algorithm>
+#include <array>
 #include <set>
 #include <QImage>
 #include <QPainter>
@@ -68,6 +70,28 @@ TEST(KepatihanPitchPreview, UsesTargetDeviationNotSampleTransposition)
         }
     }
     EXPECT_TRUE(found);
+}
+
+TEST(KepatihanPitchPreview, GongKemodong2UsesPdfPitchAndCentsData)
+{
+    const std::array<mu::notation::KepatihanPitchTarget, 6> expected { {
+        { "gong-kemodong-2-original-tuning", 41, 41, 16 },
+        { "gong-kemodong-2-original-tuning", 44, 44, 45 },
+        { "gong-kemodong-2-original-tuning", 47, 47, 38 },
+        { "gong-kemodong-2-original-tuning", 48, 48, -32 },
+        { "gong-kemodong-2-original-tuning", 50, 50, 14 },
+        { "gong-kemodong-2-original-tuning", 52, 52, -18 },
+    } };
+    for (const auto& item : expected) {
+        const auto found = std::find_if(std::begin(mu::notation::KEPATIHAN_PITCH_TARGETS),
+                                        std::end(mu::notation::KEPATIHAN_PITCH_TARGETS),
+                                        [&item](const auto& target) {
+            return target.instrument == std::string(item.instrument) && target.key == item.key;
+        });
+        ASSERT_NE(found, std::end(mu::notation::KEPATIHAN_PITCH_TARGETS));
+        EXPECT_EQ(found->pitch, item.pitch);
+        EXPECT_EQ(found->cents, item.cents);
+    }
 }
 
 TEST(KepatihanPitchPreview, PdfReferencesCoverAllGenderTuningsWithoutInventingMissingValues)

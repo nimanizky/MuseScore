@@ -2342,6 +2342,114 @@ void TDraw::draw(const MMRestRange* item, Painter* painter, const PaintOptions& 
     drawTextBase(item, painter, opt);
 }
 
+// Hold and silence pulses use the same subdivision bars as pitched digits.
+static void drawNumericPulseDot(Painter* painter, const Color& color, double spatium,
+                                const PointF& position, const Fraction& duration,
+                                const EngravingItem* owner, const Fraction& tick)
+{
+    const RectF dot = numericPulseEmptyPulseBbox(spatium).translated(position);
+    painter->save();
+    painter->setNoPen();
+    painter->setBrush(color);
+    painter->drawEllipse(dot);
+    int marks = 0;
+    Fraction unit(1, 4);
+    while (duration > Fraction(0, 1) && duration < unit && marks < 8) {
+        unit /= 2;
+        ++marks;
+    }
+    painter->setPen(Pen(color, numericPulseRhythmMarkThickness(spatium),
+                        PenStyle::SolidLine, PenCapStyle::FlatCap));
+    const Measure* measure = owner->findMeasure();
+    const Fraction meter = measure->timesig();
+    const int denominator = meter.denominator();
+    const bool compound = denominator == 8 && meter.numerator() > 3 && meter.numerator() % 3 == 0;
+    const Fraction beat(compound ? 3 : 1, denominator);
+    const Fraction nextTick = tick + duration;
+    const double beatPosition = ((nextTick - measure->tick()) / beat).toDouble();
+    const ChordRest* next = measure->findChordRest(nextTick, owner->track());
+    const bool join = marks > 0 && next && next->actualTicks() < Fraction(1, 4)
+                      && std::abs(beatPosition - std::round(beatPosition)) > 0.00001;
+    const double nextX = join ? measure->tick2pos(measure->ticks() + nextTick - measure->tick())
+                               - owner->systemPos().x() : position.x();
+    int nextMarks = 0;
+    Fraction nextUnit(1, 4);
+    while (join && next->actualTicks() < nextUnit && nextMarks < 8) {
+        nextUnit /= 2;
+        ++nextMarks;
+    }
+    for (int i = 0; i < marks; ++i) {
+        RectF beamAnchor = dot;
+        // A hold and its following rest belong to the attack's beam group.
+        // Use a common horizontal level rather than joining different heights.
+        const Chord* attack = owner->isNote() ? toNote(owner)->chord() : nullptr;
+        if (!attack) {
+            for (Segment* seg = measure->first(SegmentType::ChordRest); seg && seg->tick() < tick;
+                 seg = seg->next(SegmentType::ChordRest)) {
+                const EngravingItem* element = seg->element(owner->track());
+                if (element && element->isChord()) {
+                    const Chord* candidate = toChord(element);
+                    if (candidate->dots() > 0 && candidate->actualTicks() < Fraction(1, 4)
+                        && candidate->endTick() == tick) {
+                        attack = candidate;
+                    }
+                }
+            }
+        }
+        if (attack && attack->dots() > 0 && attack->actualTicks() < Fraction(1, 4)) {
+            const Note* note = attack->upNote();
+            const auto* profile = numericPulseProfile(note->staff(), note->tick());
+            beamAnchor = numericPulseGlyphBbox(numericPulseDegreeText(profile, note->pitch()),
+                                              note->magS(), spatium, numericPulseRegister(profile, note->pitch()),
+                                              profile->fontFamily);
+        }
+        // Beam levels run from the shared top beam down to the extra
+        // subdivision beams. A dotted attack shares all but the bottom beam.
+        const bool dottedGroup = attack && attack->dots() > 0 && attack->actualTicks() < Fraction(1, 4);
+        const int level = dottedGroup ? attack->durationType().hooks() - i : marks - 1 - i;
+        const double y = numericPulseDurationMarkY(beamAnchor, spatium, level);
+        const double right = join && i < nextMarks ? nextX + 0.65 * spatium : position.x() + 0.65 * spatium;
+        double left = position.x() - 0.65 * spatium;
+        if (attack && owner->isNote() && attack->dots() > 0
+            && attack->actualTicks() < Fraction(1, 4) && i < attack->durationType().hooks()) {
+            left = -0.65 * spatium;
+        }
+        painter->drawLine(LineF(left, y, right, y));
+    }
+    painter->restore();
+}
+
+static bool numericPulsePanjerEndForDraw(const Note* note, double* endX, bool* endsInSilence)
+{
+    const Chord* chord = note ? note->chord() : nullptr;
+    const Measure* measure = note ? note->findMeasure() : nullptr;
+    if (!chord || !measure || (chord->actualTicks() <= Fraction(1, 4) && chord->dots() == 0)) {
+        return false;
+    }
+
+    const Fraction endTick = chord->endTick();
+    const int dots = numericPulseHoldDotCount(chord->actualTicks());
+    // Short dotted values sustain through the added fraction of their base
+    // duration too, even though they do not contain a full quarter pulse.
+    const Fraction lastPulse = dots > 0 ? chord->tick() + Fraction(dots, 4)
+                                       : chord->tick() + Fraction(1, 4 << chord->durationType().hooks());
+    *endX = measure->tick2pos(measure->ticks() + lastPulse - measure->tick())
+            - note->systemPos().x() + 0.65 * note->spatium();
+
+    ChordRest* next = nullptr;
+    if (endTick <= measure->endTick()) {
+        next = measure->findChordRest(endTick, note->track());
+        if (!next && endTick == measure->endTick()) {
+            const Measure* nextMeasure = measure->nextMeasure();
+            if (nextMeasure && nextMeasure->tick() == endTick) {
+                next = nextMeasure->findChordRest(endTick, note->track());
+            }
+        }
+    }
+    *endsInSilence = next && next->type() == ElementType::REST;
+    return true;
+}
+
 void TDraw::draw(const Note* item, Painter* painter, const PaintOptions& opt)
 {
     TRACE_DRAW_ITEM;
@@ -2367,6 +2475,26 @@ void TDraw::draw(const Note* item, Painter* painter, const PaintOptions& opt)
         painter->drawText(PointF(numericPulseTextOriginX(text, item->magS(), numericProfile->fontFamily), 0.0), text);
 
         const RectF textBbox = numericPulseTextBbox(text, item->magS(), numericProfile->fontFamily);
+        const Chord* chord = item->chord();
+        const bool shortDotted = chord && chord->dots() > 0 && chord->actualTicks() < Fraction(1, 4);
+        const Fraction holdStep = shortDotted ? Fraction(1, 4 << chord->durationType().hooks()) : Fraction(1, 4);
+        const int holdDots = shortDotted ? 1 : (chord ? numericPulseHoldDotCount(chord->actualTicks()) : 0);
+        if (holdDots > 0) {
+            painter->save();
+            painter->setNoPen();
+            painter->setBrush(Brush(item->curColor(opt)));
+            for (int i = 0; i < holdDots; ++i) {
+                const Measure* measure = item->findMeasure();
+                const Fraction pulseTick = chord->tick() + holdStep * (i + 1);
+                const double x = measure->tick2pos(measure->ticks() + pulseTick - measure->tick())
+                                 - item->systemPos().x();
+                drawNumericPulseDot(painter, item->curColor(opt), item->spatium(), PointF(x, 0.0),
+                                    std::min(holdStep, chord->endTick() - pulseTick), item, pulseTick);
+            }
+            painter->restore();
+
+        }
+
         const int registerOffset = numericPulseRegister(numericProfile, item->pitch());
         if (registerOffset != 0) {
             painter->save();
@@ -2378,7 +2506,6 @@ void TDraw::draw(const Note* item, Painter* painter, const PaintOptions& opt)
             painter->restore();
         }
 
-        const Chord* chord = item->chord();
         const int durationMarks = numericProfile->durationMarksAbove && chord && !chord->beam()
                                   ? chord->durationType().hooks() : 0;
         if (durationMarks > 0) {
@@ -2388,9 +2515,28 @@ void TDraw::draw(const Note* item, Painter* painter, const PaintOptions& opt)
             painter->setPen(Pen(item->curColor(opt), numericPulseRhythmMarkThickness(item->spatium()),
                                 PenStyle::SolidLine, PenCapStyle::FlatCap));
             for (int i = 0; i < durationMarks; ++i) {
-                const double y = numericPulseDurationMarkY(glyphBbox, item->spatium(), i);
+                const double y = numericPulseDurationMarkY(glyphBbox, item->spatium(), i + (shortDotted ? 1 : 0));
                 painter->drawLine(LineF(-width * 0.5, y, width * 0.5, y));
             }
+        }
+
+        double panjerEndX = 0.0;
+        bool endsInSilence = false;
+        if (numericPulsePanjerEndForDraw(item, &panjerEndX, &endsInSilence)) {
+            RectF panjerAnchor = numericPulseGlyphBbox(text, item->magS(), item->spatium(),
+                                                       registerOffset, numericProfile->fontFamily);
+            for (int i = 0; i < holdDots; ++i) {
+                panjerAnchor = panjerAnchor.united(numericPulseAugmentationDotBbox(textBbox, item->spatium(), i));
+            }
+            const NumericPulsePanjerMark panjer = numericPulsePanjerMark(panjerAnchor, item->spatium(),
+                                                                          item->magS(), panjerEndX);
+            painter->setFont(numericPulseFont(panjer.label.scale));
+            painter->drawText(PointF(panjer.label.originX, panjer.baseline), panjer.label.text);
+            painter->setPen(Pen(item->curColor(opt), panjer.lineThickness,
+                                PenStyle::SolidLine, PenCapStyle::FlatCap));
+            painter->drawLine(LineF(panjer.lineStartX, panjer.lineY, panjer.endX, panjer.lineY));
+            painter->drawLine(LineF(panjer.endX, panjer.lineY,
+                                    panjer.endX, panjer.lineY - 0.55 * item->spatium()));
         }
         return;
     }
@@ -2627,12 +2773,10 @@ void TDraw::draw(const Rest* item, Painter* painter, const PaintOptions& opt)
     const NumericPulseProfile* numericProfile = numericPulseProfile(item->staff(), item->tick());
     if (numericProfile) {
         if (numericProfile->showEmptyPulses) {
-            int pulseCount = 1;
-            double availableWidth = 0.0;
-            if (item->durationType().isMeasure() && item->measure()) {
-                pulseCount = numericPulseMeasurePulseCount(item->measure()->ticks(), item->measure()->timesig());
-                availableWidth = item->measure()->width();
-            }
+            const Measure* measure = item->measure();
+            const Fraction pulse(1, measure->timesig().denominator());
+            const Fraction duration = item->durationType().isMeasure() ? measure->ticks() : item->actualTicks();
+            const int pulseCount = std::max(1, static_cast<int>(std::ceil((duration / pulse).toDouble())));
             painter->save();
             painter->setBrush(item->curColor(opt));
             painter->setNoPen();
@@ -2641,8 +2785,12 @@ void TDraw::draw(const Rest* item, Painter* painter, const PaintOptions& opt)
             const double rowDistance = multipleRows ? numericPulseRowDistance(item->staff(), item->tick()) : 0.0;
             for (int row = 0; row < rowCount; ++row) {
                 for (int pulseIndex = 0; pulseIndex < pulseCount; ++pulseIndex) {
-                    painter->drawEllipse(numericPulseEmptyPulseBbox(item->spatium(), pulseIndex, pulseCount, availableWidth)
-                                         .translated(0.0, row * rowDistance));
+                    const Fraction pulseTick = item->tick() + pulse * pulseIndex;
+                    const double x = measure->tick2pos(measure->ticks() + pulseTick - measure->tick())
+                                     - item->systemPos().x();
+                    drawNumericPulseDot(painter, item->curColor(opt), item->spatium(),
+                                        PointF(x, row * rowDistance),
+                                        std::min(pulse, duration - pulse * pulseIndex), item, pulseTick);
                 }
             }
             painter->restore();

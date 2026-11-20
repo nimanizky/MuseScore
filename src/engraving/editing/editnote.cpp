@@ -735,6 +735,10 @@ void EditNote::upDown(Score* score, bool up, UpDownMode mode)
 
                 // Arrow keys traverse the tuning across registers, including
                 // notes imported outside the register-entry menu's bounds.
+                // A sample-limited degree cannot move into an unrecorded octave.
+                if (target->fixedRegister && targetRegister != *target->fixedRegister) {
+                    break;
+                }
                 const int targetPitch = target->scorePitch + targetRegister * 12;
                 if (targetPitch < 0 || targetPitch > 127) {
                     break;

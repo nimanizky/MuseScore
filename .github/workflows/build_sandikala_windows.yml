@@ -1,0 +1,56 @@
+name: Build Sandikala Windows installer
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  installer:
+    runs-on: windows-2022
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Apply local framework fixes
+        shell: bash
+        run: |
+          if [ -f buildscripts/packaging/Windows/Sandikala/framework.patch ]; then
+            git -C muse apply --unidiff-zero --check ../buildscripts/packaging/Windows/Sandikala/framework.patch
+            git -C muse apply --unidiff-zero ../buildscripts/packaging/Windows/Sandikala/framework.patch
+          fi
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.10.2'
+          arch: win64_msvc2022_64
+          modules: qt5compat qtnetworkauth qtshadertools qtwebsockets
+          cache: true
+      - name: Install build dependencies
+        shell: cmd
+        run: buildscripts\ci\windows\setup.bat
+      - name: Install MSI packaging tools
+        shell: pwsh
+        run: choco install wixtoolset --version=3.14.1 -y --no-progress
+      - name: Configure build metadata
+        shell: bash
+        run: |
+          bash buildscripts/ci/tools/make_build_mode_env.sh -e workflow_dispatch -m testing
+          bash buildscripts/ci/tools/make_build_number.sh "$GITHUB_RUN_NUMBER"
+      - name: Build Windows x64
+        shell: cmd
+        run: buildscripts\ci\windows\build.bat -n ${{ github.run_number }} --dockwidgets_v2 ON
+      - name: Create MSI
+        shell: pwsh
+        run: |
+          $config = Get-ChildItem build.release -Filter CPackConfig.cmake -Recurse | Select-Object -First 1
+          if (!$config) { throw 'CPack configuration missing' }
+          $wix = Get-ChildItem 'C:/Program Files (x86)' -Directory -Filter 'WiX Toolset*' | Select-Object -First 1
+          if (!$wix) { throw 'WiX Toolset 3 is required' }
+          $env:PATH = "$($wix.FullName)/bin;$env:PATH"
+          cpack --config $config.FullName -G WIX -C RelWithDebInfo -D "CPACK_WIX_ROOT=$($wix.FullName)" -D "CPACK_WIX_PRODUCT_GUID=$([guid]::NewGuid())" -D CPACK_WIX_UPGRADE_GUID=74CE7E41-DB66-4FD0-83F2-6E96AA49D5B2 -D CPACK_PACKAGE_INSTALL_DIRECTORY=Sandikala-MuseScore -D CPACK_PACKAGE_FILE_NAME=Sandikala-Windows-x64 -B build.artifacts/installer
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Sandikala-Windows-x64-installer
+          path: build.artifacts/installer/*.msi
+          if-no-files-found: error
+          retention-days: 30

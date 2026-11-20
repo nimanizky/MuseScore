@@ -41,6 +41,15 @@ static bool resolveGamelanSetupData(const Instrument* instrument, PlaybackSetupD
 {
     const std::string instrumentId = instrument->id().toStdString();
 
+    if (instrumentId == "gong-kemodong-1-original-tuning") {
+        result = PlaybackSetupData(String(u"gong-kemodong-1-original-tuning"), SoundCategory::Percussions);
+        return true;
+    }
+    if (instrumentId == "gong-kemodong-2-original-tuning") {
+        result = PlaybackSetupData(String(u"gong-kemodong-2-original-tuning"), SoundCategory::Percussions);
+        return true;
+    }
+
     // Bundled Gamelan SoundFonts use a dedicated setup id so they can be
     // selected automatically instead of sharing the generic FluidSynth
     // resource used by orchestral instruments.

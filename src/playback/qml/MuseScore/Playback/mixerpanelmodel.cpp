@@ -458,7 +458,12 @@ MixerChannelItem* MixerPanelModel::buildInstrumentChannelItem(const TrackId trac
         playback()->setSourceParams(trackId, params);
     });
 
-    connect(item, &MixerChannelItem::controlParamsChanged, this, [this, trackId](const AudioOutputParams& params) {
+    connect(item, &MixerChannelItem::controlParamsChanged, this,
+            [this, trackId, instrumentTrackId](const AudioOutputParams& params) {
+        AudioOutputParams savedParams = audioSettings()->trackOutputParams(instrumentTrackId);
+        savedParams.volume = params.volume;
+        savedParams.balance = params.balance;
+        audioSettings()->setTrackOutputParams(instrumentTrackId, savedParams);
         playback()->setControlParams(trackId, params.control());
     });
 
@@ -516,7 +521,12 @@ MixerChannelItem* MixerPanelModel::buildAuxChannelItem(aux_channel_idx_t index, 
                << ", " << text;
     });
 
-    connect(item, &MixerChannelItem::controlParamsChanged, this, [this, trackId](const AudioOutputParams& params) {
+    connect(item, &MixerChannelItem::controlParamsChanged, this,
+            [this, trackId, index](const AudioOutputParams& params) {
+        AudioOutputParams savedParams = audioSettings()->auxOutputParams(index);
+        savedParams.volume = params.volume;
+        savedParams.balance = params.balance;
+        audioSettings()->setAuxOutputParams(index, savedParams);
         playback()->setControlParams(trackId, params.control());
     });
     connect(item, &MixerChannelItem::fxChainParamsChanged, this, [this, trackId](const AudioOutputParams& params) {
@@ -555,6 +565,10 @@ MixerChannelItem* MixerPanelModel::buildMasterChannelItem()
     });
 
     connect(item, &MixerChannelItem::controlParamsChanged, this, [this](const AudioOutputParams& params) {
+        AudioOutputParams savedParams = audioSettings()->masterAudioOutputParams();
+        savedParams.volume = params.volume;
+        savedParams.balance = params.balance;
+        audioSettings()->setMasterAudioOutputParams(savedParams);
         playback()->setMasterControlParams(params.control());
     });
 

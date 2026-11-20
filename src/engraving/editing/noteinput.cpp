@@ -916,9 +916,12 @@ Ret NoteInput::putNote(Transaction& tx, Score* score, const Position& p, bool re
             degree = &numericProfile->degrees.front();
         }
 
-        const int registerOffset = is.numericPulseRegisterExplicit()
-                                   ? is.numericPulseRegisterOffset()
-                                   : numericProfile->defaultRegister;
+        const int registerOffset = degree && degree->fixedRegister ? *degree->fixedRegister
+                                   : (is.numericPulseRegisterExplicit() ? is.numericPulseRegisterOffset()
+                                                                       : numericProfile->defaultRegister);
+        if (degree && degree->fixedRegister) {
+            is.setNumericPulseRegisterOffset(registerOffset);
+        }
         const int pitch = numericPulsePitch(numericProfile, degree, registerOffset);
         if (!degree || pitch < 0) {
             return make_ret(Ret::Code::UnknownError);
@@ -1504,9 +1507,12 @@ void NoteInput::addPitch(Transaction& tx, Score* score, const NoteInputParams& p
             score->normalizeNumericPulseMeasureRests();
         }
         is.setVoice(0);
-        int registerOffset = numericProfile->defaultRegister;
-        if (is.numericPulseRegisterExplicit()) {
+        int registerOffset = degree->fixedRegister.value_or(numericProfile->defaultRegister);
+        if (is.numericPulseRegisterExplicit() && !degree->fixedRegister) {
             registerOffset = is.numericPulseRegisterOffset();
+        }
+        if (degree->fixedRegister) {
+            is.setNumericPulseRegisterOffset(registerOffset);
         }
         const int pitch = numericPulsePitch(numericProfile, degree, registerOffset);
         if (pitch < 0) {

@@ -92,6 +92,7 @@
 #include "dom/lyrics.h"
 
 #include "dom/marker.h"
+#include "dom/measure.h"
 #include "dom/measurebase.h"
 #include "dom/measurenumber.h"
 #include "dom/measurenumberbase.h"
@@ -4135,6 +4136,39 @@ void TLayout::layoutMMRestRange(MMRestRange* item, MMRestRange::LayoutData* ldat
     MeasureNumberLayout::layoutMMRestRange(item, ldata, ctx);
 }
 
+static bool numericPulsePanjerEnd(const Note* note, double* endX, bool* endsInSilence = nullptr)
+{
+    const Chord* chord = note ? note->chord() : nullptr;
+    const Measure* measure = note ? note->findMeasure() : nullptr;
+    if (!chord || !measure || (chord->actualTicks() <= Fraction(1, 4) && chord->dots() == 0)) {
+        return false;
+    }
+
+    const Fraction endTick = chord->endTick();
+    const int dots = numericPulseHoldDotCount(chord->actualTicks());
+    // Short dotted values sustain through the added fraction of their base
+    // duration too, even though they do not contain a full quarter pulse.
+    const Fraction lastPulse = dots > 0 ? chord->tick() + Fraction(dots, 4)
+                                       : chord->tick() + Fraction(1, 4 << chord->durationType().hooks());
+    *endX = measure->tick2pos(measure->ticks() + lastPulse - measure->tick())
+            - note->systemPos().x() + 0.65 * note->spatium();
+
+    ChordRest* next = nullptr;
+    if (endTick <= measure->endTick()) {
+        next = measure->findChordRest(endTick, note->track());
+        if (!next && endTick == measure->endTick()) {
+            const Measure* nextMeasure = measure->nextMeasure();
+            if (nextMeasure && nextMeasure->tick() == endTick) {
+                next = nextMeasure->findChordRest(endTick, note->track());
+            }
+        }
+    }
+    if (endsInSilence) {
+        *endsInSilence = next && next->type() == ElementType::REST;
+    }
+    return true;
+}
+
 void TLayout::layoutNote(const Note* item, Note::LayoutData* ldata)
 {
     LAYOUT_CALL_ITEM(item);
@@ -4154,10 +4188,17 @@ void TLayout::layoutNote(const Note* item, Note::LayoutData* ldata)
         const bool hasNativeBeam = item->chord() && item->chord()->beam();
         const int durationMarks = hasNativeBeam || !numericProfile->durationMarksAbove
                                   ? 0 : item->chord()->durationType().hooks();
+        const bool shortDotted = item->chord() && item->chord()->dots() > 0
+                                 && item->chord()->actualTicks() < Fraction(1, 4);
+        const int holdDots = shortDotted ? 1 : (item->chord() ? numericPulseHoldDotCount(item->chord()->actualTicks()) : 0);
+        double panjerEndX = 0.0;
+        const bool hasPanjer = numericPulsePanjerEnd(item, &panjerEndX);
         noteBBox = numericPulseNoteBbox(numericPulseDegreeText(numericProfile, item->pitch()),
                                         item->magS(), item->spatium(),
-                                        numericPulseRegister(numericProfile, item->pitch()), durationMarks,
-                                        numericProfile->fontFamily);
+                                        numericPulseRegister(numericProfile, item->pitch()),
+                                        durationMarks + (shortDotted && durationMarks > 0 ? 1 : 0),
+                                        numericProfile->fontFamily, holdDots,
+                                        hasPanjer, panjerEndX);
         ldata->cachedNoteheadSym.set_value(SymId::noSym);
         ldata->cachedSymNull.set_value(SymId::noSym);
     } else if (useTablature) {

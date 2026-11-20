@@ -5,6 +5,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <vector>
 
@@ -197,16 +198,79 @@ inline double numericPulseDurationMarkY(const muse::RectF& textBbox, double spat
            - numericPulseRhythmMarkDistance(spatium) * index;
 }
 
+inline muse::RectF numericPulseAugmentationDotBbox(const muse::RectF& textBbox, double spatium, int index)
+{
+    const double diameter = 0.20 * spatium;
+    const double gap = 0.16 * spatium;
+    const double centerX = textBbox.right() + gap + diameter * (index + 0.5) + gap * index;
+    const double centerY = textBbox.center().y();
+    return muse::RectF(centerX - diameter * 0.5, centerY - diameter * 0.5, diameter, diameter);
+}
+
+inline int numericPulseHoldDotCount(const Fraction& duration)
+{
+    const double quarterNotes = duration.toDouble() * 4.0;
+    return quarterNotes > 1.0 ? std::max(1, static_cast<int>(std::ceil(quarterNotes)) - 1) : 0;
+}
+
+struct NumericPulsePanjerMark {
+    NumericPulseTextMetrics label;
+    double baseline = 0.0;
+    double lineStartX = 0.0;
+    double lineY = 0.0;
+    double endX = 0.0;
+    double endDiameter = 0.0;
+    double lineThickness = 0.0;
+    muse::RectF bbox;
+};
+
+inline NumericPulsePanjerMark numericPulsePanjerMark(const muse::RectF& noteBbox, double spatium,
+                                                     double scale, double endX)
+{
+    static const muse::String PANJER(u"panjer");
+    const double labelScale = 0.68 * scale;
+    NumericPulseTextMetrics label = numericPulseTextMetrics(PANJER, labelScale);
+    const double labelShift = 0.80 * spatium;
+    label.originX += labelShift;
+    label.bbox.translate(labelShift, 0.0);
+    const double top = noteBbox.bottom() + 0.42 * spatium;
+    const double baseline = top - label.bbox.top();
+    const double lineThickness = 0.08 * spatium;
+    const double endDiameter = 0.20 * spatium;
+    const double lineY = baseline + label.bbox.center().y();
+    const muse::draw::FontMetrics labelMetrics(numericPulseFont(labelScale));
+    const double lineStartX = label.originX + labelMetrics.tightBoundingRect(PANJER).right() + 0.24 * spatium;
+    const muse::RectF labelBbox = label.bbox.translated(muse::PointF(0.0, baseline));
+    endX = std::max(endX, lineStartX + spatium);
+    const double lineLeft = std::min(lineStartX, endX);
+    const double lineRight = std::max(lineStartX, endX);
+    muse::RectF bbox = labelBbox.united(muse::RectF(lineLeft, lineY - lineThickness * 0.5,
+                                                    lineRight - lineLeft, lineThickness));
+    bbox = bbox.united(muse::RectF(endX - endDiameter * 0.5, lineY - endDiameter * 0.5,
+                                   endDiameter, endDiameter));
+    return { label, baseline, lineStartX, lineY, endX, endDiameter, lineThickness, bbox };
+}
+
 inline muse::RectF numericPulseNoteBbox(const muse::String& text, double scale, double spatium,
-                                        int registerOffset, int durationMarks, const muse::String& fontFamily = {})
+                                        int registerOffset, int durationMarks, const muse::String& fontFamily = {},
+                                        int holdDots = 0, bool hasPanjer = false, double panjerEndX = 0.0)
 {
     muse::RectF bbox = numericPulseGlyphBbox(text, scale, spatium, registerOffset, fontFamily);
+    const muse::RectF textBbox = numericPulseTextBbox(text, scale, fontFamily);
+    for (int i = 0; i < holdDots; ++i) {
+        bbox = bbox.united(numericPulseAugmentationDotBbox(textBbox, spatium, i));
+    }
     if (durationMarks > 0) {
-        const muse::RectF textBbox = numericPulseTextBbox(text, scale, fontFamily);
         const double width = numericPulseDurationMarkWidth(textBbox, spatium);
         const double thickness = numericPulseRhythmMarkThickness(spatium);
         const double top = numericPulseDurationMarkY(bbox, spatium, durationMarks - 1) - thickness * 0.5;
         bbox = bbox.united(muse::RectF(-width * 0.5, top, width, thickness));
+    }
+    if (hasPanjer) {
+        const auto mark = numericPulsePanjerMark(bbox, spatium, scale, panjerEndX);
+        // Horizontal extent follows final measure spacing; reserve vertical room
+        // without feeding the entire sustain span back into note spacing.
+        bbox = bbox.united(muse::RectF(bbox.left(), mark.bbox.top(), bbox.width(), mark.bbox.height()));
     }
     return bbox;
 }

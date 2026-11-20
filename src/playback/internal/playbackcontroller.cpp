@@ -1237,6 +1237,8 @@ void PlaybackController::doAddTrack(const InstrumentTrackId& instrumentTrackId, 
 
         const std::string instrumentId = instrumentTrackId.instrumentId.toStdString();
         const bool isGamelanTrack = instrumentId.find("-pelog") != std::string::npos
+                                    || instrumentId == "gong-kemodong-1-original-tuning"
+                                    || instrumentId == "gong-kemodong-2-original-tuning"
                                     || instrumentId.find("-slendro") != std::string::npos
                                     || instrumentId.find("kendhang-") != std::string::npos
                                     || instrumentId.find("-tuning-") != std::string::npos;

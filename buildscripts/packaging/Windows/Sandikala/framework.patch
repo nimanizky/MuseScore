@@ -1,0 +1,203 @@
+diff --git a/framework/audio/driver/platform/osx/osxdirectaudiodriver.h b/framework/audio/driver/platform/osx/osxdirectaudiodriver.h
+index 215d3bedd..6da43f5b3 100644
+--- a/framework/audio/driver/platform/osx/osxdirectaudiodriver.h
++++ b/framework/audio/driver/platform/osx/osxdirectaudiodriver.h
+@@ -82 +82 @@ private:
+-    std::unique_ptr<Data> m_data = nullptr;
++    std::unique_ptr<Data> m_data;
+diff --git a/framework/audio/engine/internal/audiocontext.cpp b/framework/audio/engine/internal/audiocontext.cpp
+index b28e4be49..0728ea960 100644
+--- a/framework/audio/engine/internal/audiocontext.cpp
++++ b/framework/audio/engine/internal/audiocontext.cpp
+@@ -744,2 +744,10 @@ async::Promise<Ret> AudioContext::saveSoundTrack(io::IODevice& dstDevice, const
+-        m_player->stop();
+-        m_player->seek(TimePosition::zero(m_outputSpec.sampleRate));
++        Operation stopAndRewind = [this]() {
++            m_player->stop();
++            m_player->seek(TimePosition::zero(m_outputSpec.sampleRate));
++        };
++
++        if (m_execOperation) {
++            m_execOperation->execOperation(OperationType::LongOperation, stopAndRewind);
++        } else {
++            stopAndRewind();
++        }
+@@ -867 +875 @@ Ret AudioContext::doSaveSoundTrack(io::IODevice& dstDevice, const SoundTrackForm
+-    auto writer = std::make_shared<SoundTrackWriter>(dstDevice, format, totalDuration, m_mixer);
++    auto writer = std::make_shared<SoundTrackWriter>(dstDevice, format, totalDuration, m_masterTrack.chain);
+@@ -880,2 +888 @@ Ret AudioContext::doSaveSoundTrack(io::IODevice& dstDevice, const SoundTrackForm
+-    setMode(ProcessMode::PlayingOffline);
+-    Ret ret = writer->write();
++    Ret ret;
+@@ -886,2 +893,5 @@ Ret AudioContext::doSaveSoundTrack(io::IODevice& dstDevice, const SoundTrackForm
+-    Operation func = [this]() {
+-        m_mixer->setOutputSpec(outputSpec());
++    Operation func = [this, &writer, &ret]() {
++        // Keep the live driver out of the mixer for the entire offline render.
++        setMode(ProcessMode::PlayingOffline);
++        ret = writer->write();
++        m_masterTrack.chain->setOutputSpec(outputSpec());
+@@ -888,0 +899 @@ Ret AudioContext::doSaveSoundTrack(io::IODevice& dstDevice, const SoundTrackForm
++        m_player->seek(TimePosition::zero(m_outputSpec.sampleRate));
+@@ -897,2 +907,0 @@ Ret AudioContext::doSaveSoundTrack(io::IODevice& dstDevice, const SoundTrackForm
+-    m_player->seek(TimePosition::zero(m_outputSpec.sampleRate));
+-
+diff --git a/framework/audio/engine/internal/audioengine.cpp b/framework/audio/engine/internal/audioengine.cpp
+index d62048224..ba9902b25 100644
+--- a/framework/audio/engine/internal/audioengine.cpp
++++ b/framework/audio/engine/internal/audioengine.cpp
+@@ -178,0 +179 @@ void AudioEngine::execOperation(OperationType type, const Operation& func)
++    const OperationType previousType = m_operationType;
+@@ -191,2 +192,2 @@ void AudioEngine::execOperation(OperationType type, const Operation& func)
+-    m_operationType = OperationType::NoOperation;
+-    AudioSanitizer::setOperationType(OperationType::NoOperation);
++    m_operationType = previousType;
++    AudioSanitizer::setOperationType(previousType);
+diff --git a/framework/audio/engine/internal/export/soundtrackwriter.cpp b/framework/audio/engine/internal/export/soundtrackwriter.cpp
+index 1ba4e8c69..839df068c 100644
+--- a/framework/audio/engine/internal/export/soundtrackwriter.cpp
++++ b/framework/audio/engine/internal/export/soundtrackwriter.cpp
+@@ -168,0 +169,3 @@ Ret SoundTrackWriter::writeStreaming()
++        // The mixer adds into its output buffer. Each block must start
++        // silent so previous blocks cannot accumulate into the export.
++        std::fill(m_intermBuffer.begin(), m_intermBuffer.end(), 0.f);
+diff --git a/framework/audio/engine/internal/mixer.cpp b/framework/audio/engine/internal/mixer.cpp
+index e7b575c08..0ea8bbc21 100644
+--- a/framework/audio/engine/internal/mixer.cpp
++++ b/framework/audio/engine/internal/mixer.cpp
+@@ -222,0 +223,7 @@ bool Mixer::useMultithreading() const
++    // Offline rendering can run inside an async queue callback. Worker
++    // notifications must not wait for that callback's queue lock while the
++    // export thread waits for the workers to finish.
++    if (m_mode == ProcessMode::PlayingOffline) {
++        return false;
++    }
++
+diff --git a/framework/audio/engine/internal/synthesizers/fluidsynth/fluidresolver.cpp b/framework/audio/engine/internal/synthesizers/fluidsynth/fluidresolver.cpp
+index ffef69250..6b7e78183 100644
+--- a/framework/audio/engine/internal/synthesizers/fluidsynth/fluidresolver.cpp
++++ b/framework/audio/engine/internal/synthesizers/fluidsynth/fluidresolver.cpp
+@@ -101,0 +102,84 @@ static std::string makeId(const std::string& name, int bank, int program)
++static String playbackSetupDataForSoundFont(const SoundFontMeta& soundFont)
++{
++    if (soundFont.name == "Gamelan_Gong_Kemodong_1_Original_Tuning") {
++        return String(u"percussions.gong-kemodong-1-original-tuning");
++    }
++    if (soundFont.name == "Gamelan_Gong_Kemodong_2_Original_Tuning") {
++        return String(u"percussions.gong-kemodong-2-original-tuning");
++    }
++    if (soundFont.name == "Gamelan_Gender_Barung_8_1_Med_Diversity") {
++        return String(u"percussions.gender-barung-tuning-8-1-med-diversity");
++    }
++    if (soundFont.name == "Gamelan_Gender_Barung_8_2_Med_Diversity") {
++        return String(u"percussions.gender-barung-tuning-8-2-med-diversity");
++    }
++    if (soundFont.name == "Gamelan_Gender_Barung_8_3_Med_Diversity") {
++        return String(u"percussions.gender-barung-tuning-8-3-med-diversity");
++    }
++    if (soundFont.name == "Gamelan_Gender_Barung_8_4_Med_Diversity") {
++        return String(u"percussions.gender-barung-tuning-8-4-med-diversity");
++    }
++    if (soundFont.name == "Gamelan_Gender_Barung_8_1_Max_Uniformity") {
++        return String(u"percussions.gender-barung-tuning-8-1-max-uniformity");
++    }
++    if (soundFont.name == "Gamelan_Gender_Barung_8_2_Max_Uniformity") {
++        return String(u"percussions.gender-barung-tuning-8-2-max-uniformity");
++    }
++    if (soundFont.name == "Gamelan_Gender_Barung_8_3_Max_Uniformity") {
++        return String(u"percussions.gender-barung-tuning-8-3-max-uniformity");
++    }
++    if (soundFont.name == "Gamelan_Gender_Barung_8_4_Max_Uniformity") {
++        return String(u"percussions.gender-barung-tuning-8-4-max-uniformity");
++    }
++    if (soundFont.name == "Gamelan_Rebab_8_1_Med_Diversity") {
++        return String(u"strings.rebab-tuning-8-1-med-diversity");
++    }
++    if (soundFont.name == "Gamelan_Rebab_8_2_Med_Diversity") {
++        return String(u"strings.rebab-tuning-8-2-med-diversity");
++    }
++    if (soundFont.name == "Gamelan_Rebab_8_3_Med_Diversity") {
++        return String(u"strings.rebab-tuning-8-3-med-diversity");
++    }
++    if (soundFont.name == "Gamelan_Rebab_8_4_Med_Diversity") {
++        return String(u"strings.rebab-tuning-8-4-med-diversity");
++    }
++    if (soundFont.name == "Gamelan_Rebab_8_1_Max_Uniformity") {
++        return String(u"strings.rebab-tuning-8-1-max-uniformity");
++    }
++    if (soundFont.name == "Gamelan_Rebab_8_2_Max_Uniformity") {
++        return String(u"strings.rebab-tuning-8-2-max-uniformity");
++    }
++    if (soundFont.name == "Gamelan_Rebab_8_3_Max_Uniformity") {
++        return String(u"strings.rebab-tuning-8-3-max-uniformity");
++    }
++    if (soundFont.name == "Gamelan_Rebab_8_4_Max_Uniformity") {
++        return String(u"strings.rebab-tuning-8-4-max-uniformity");
++    }
++    if (soundFont.name == "Gamelan_Rebab_7_1_Max_Diversity") {
++        return String(u"strings.rebab-tuning-7-1-max-diversity");
++    }
++    if (soundFont.name == "Gamelan_Rebab_7_2_Max_Diversity") {
++        return String(u"strings.rebab-tuning-7-2-max-diversity");
++    }
++    if (soundFont.name == "Gamelan_Rebab_7_3_Max_Diversity") {
++        return String(u"strings.rebab-tuning-7-3-max-diversity");
++    }
++    if (soundFont.name == "Gamelan_Rebab_7_4_Max_Diversity") {
++        return String(u"strings.rebab-tuning-7-4-max-diversity");
++    }
++    if (soundFont.name == "Gamelan_Gender_Barung_7_1_Max_Diversity") {
++        return String(u"percussions.gender-barung-tuning-7-1-max-diversity");
++    }
++    if (soundFont.name == "Gamelan_Gender_Barung_7_2_Max_Diversity") {
++        return String(u"percussions.gender-barung-tuning-7-2-max-diversity");
++    }
++    if (soundFont.name == "Gamelan_Gender_Barung_7_3_Max_Diversity") {
++        return String(u"percussions.gender-barung-tuning-7-3-max-diversity");
++    }
++    if (soundFont.name == "Gamelan_Gender_Barung_7_4_Max_Diversity") {
++        return String(u"percussions.gender-barung-tuning-7-4-max-diversity");
++    }
++
++    return muse::mpe::GENERIC_SETUP_DATA_STRING;
++}
++
+@@ -109,0 +194 @@ void FluidResolver::refresh()
++        const String playbackSetupData = playbackSetupDataForSoundFont(soundFont);
+@@ -119 +204 @@ void FluidResolver::refresh()
+-                { PLAYBACK_SETUP_DATA_ATTRIBUTE, muse::mpe::GENERIC_SETUP_DATA_STRING },
++                { PLAYBACK_SETUP_DATA_ATTRIBUTE, playbackSetupData },
+@@ -134 +219 @@ void FluidResolver::refresh()
+-                { PLAYBACK_SETUP_DATA_ATTRIBUTE, muse::mpe::GENERIC_SETUP_DATA_STRING },
++                { PLAYBACK_SETUP_DATA_ATTRIBUTE, playbackSetupData },
+diff --git a/framework/global/types/mnemonicstring.cpp b/framework/global/types/mnemonicstring.cpp
+index 04a59abd8..ae6ded9f4 100644
+--- a/framework/global/types/mnemonicstring.cpp
++++ b/framework/global/types/mnemonicstring.cpp
+@@ -39 +39 @@ static QString processMnemonic(const QString& str, bool showUnderlines)
+-        if (*c == '&') {
++        if (*c == QChar(u'&')) {
+@@ -46 +46 @@ static QString processMnemonic(const QString& str, bool showUnderlines)
+-            if (showUnderlines && *c != '&') {
++            if (showUnderlines && *c != QChar(u'&')) {
+diff --git a/framework/ui/internal/navigationcontroller.cpp b/framework/ui/internal/navigationcontroller.cpp
+index 6cbcf861a..9ecde4fd3 100644
+--- a/framework/ui/internal/navigationcontroller.cpp
++++ b/framework/ui/internal/navigationcontroller.cpp
+@@ -327 +327 @@ void NavigationController::init()
+-            ad->reg(this, action, [d, command]() { d->dispatch(command); });
++            ad->reg(this, action, [d, command = command]() { d->dispatch(command); });
+diff --git a/framework/ui/view/qmldataformatter.cpp b/framework/ui/view/qmldataformatter.cpp
+index 4eae5f519..0e142748c 100644
+--- a/framework/ui/view/qmldataformatter.cpp
++++ b/framework/ui/view/qmldataformatter.cpp
+@@ -45 +45 @@ QString QmlDataFormatter::formatReal(double value, int decimals) const
+-            while (last > decPos && formatted[last] == '0') {
++            while (last > decPos && formatted[last] == QChar(u'0')) {
+diff --git a/framework/uicomponents/qml/Muse/UiComponents/validators/doubleinputvalidator.cpp b/framework/uicomponents/qml/Muse/UiComponents/validators/doubleinputvalidator.cpp
+index a4435a18c..64ed1a820 100644
+--- a/framework/uicomponents/qml/Muse/UiComponents/validators/doubleinputvalidator.cpp
++++ b/framework/uicomponents/qml/Muse/UiComponents/validators/doubleinputvalidator.cpp
+@@ -66 +66 @@ void DoubleInputValidator::fixup(QString& string) const
+-            if (str[i] == '0') {
++            if (str[i] == QChar(u'0')) {

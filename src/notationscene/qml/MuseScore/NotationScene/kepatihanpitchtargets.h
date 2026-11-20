@@ -7,6 +7,21 @@
 namespace mu::notation {
 struct KepatihanPitchTarget { const char* instrument; int key; int pitch; double cents; };
 inline constexpr KepatihanPitchTarget KEPATIHAN_PITCH_TARGETS[] = {
+    // Tuning Gong Kemodong 1.pdf: keys trigger the original recordings;
+    // cents are display-only and must not retune the samples a second time.
+    { "gong-kemodong-1-original-tuning", 42, 42, 11 },
+    { "gong-kemodong-1-original-tuning", 45, 45, -13 },
+    { "gong-kemodong-1-original-tuning", 46, 46, -16 },
+    { "gong-kemodong-1-original-tuning", 49, 49, 6 },
+    { "gong-kemodong-1-original-tuning", 50, 50, 0 },
+    { "gong-kemodong-1-original-tuning", 51, 51, -10 },
+    // VERSION 6 APRIL - Tabel Referensi Kemodong 2: cents are display-only.
+    { "gong-kemodong-2-original-tuning", 41, 41, 16 },
+    { "gong-kemodong-2-original-tuning", 44, 44, 45 },
+    { "gong-kemodong-2-original-tuning", 47, 47, 38 },
+    { "gong-kemodong-2-original-tuning", 48, 48, -32 },
+    { "gong-kemodong-2-original-tuning", 50, 50, 14 },
+    { "gong-kemodong-2-original-tuning", 52, 52, -18 },
     { "rebab-tuning-7-1-max-diversity", 50, 50, 0 },
     { "rebab-tuning-7-1-max-diversity", 53, 53, 40 },
     { "rebab-tuning-7-1-max-diversity", 54, 54, 34 },

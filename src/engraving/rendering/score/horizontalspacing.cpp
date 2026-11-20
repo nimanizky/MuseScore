@@ -32,6 +32,7 @@
 #include "dom/glissando.h"
 #include "dom/lyrics.h"
 #include "dom/note.h"
+#include "dom/numericpulseprofile.h"
 #include "dom/rest.h"
 #include "dom/score.h"
 #include "dom/stemslash.h"
@@ -734,6 +735,29 @@ double HorizontalSpacing::chordRestSegmentNaturalWidth(Segment* segment, Horizon
     double durationStretch = computeSegmentDurationStretch(segment, segment->prev(SegmentType::ChordRest));
 
     Measure* measure = segment->measure();
+    // Sustained numeric notes still contain visible beat dots. Allocate their
+    // full pulse span instead of compressing them like one Western notehead.
+    for (const Staff* staff : measure->score()->staves()) {
+        if (numericPulseProfile(staff, segment->tick())) {
+            const double pulses = segment->ticks().toDouble() * 4.0;
+            durationStretch = std::max(durationStretch, pulses * 1.40);
+            break;
+        }
+    }
+    for (const EngravingItem* element : segment->elist()) {
+        if (!element || !element->isChord()
+            || !numericPulseProfile(element->staff(), segment->tick())) {
+            continue;
+        }
+        const Chord* chord = toChord(element);
+        if (chord->dots() > 0 && chord->actualTicks() < Fraction(1, 4)) {
+            // A short dotted rhythm contains both a digit and a separate hold
+            // pulse, plus the panjer label. Keep space for those even when the
+            // ordinary duration spring would shrink to a tiny fraction.
+            const double expanded = 4.5 * segment->ticks().toDouble() / chord->actualTicks().toDouble();
+            durationStretch = std::max(durationStretch, expanded);
+        }
+    }
     double userStretch = std::clamp(measure->userStretch(), 0.1, 10.0); // TODO: enforce via UI, not here
 
     double segTotalStretch = durationStretch * userStretch;

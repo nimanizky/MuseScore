@@ -31,7 +31,7 @@ StyledDialogView {
 
     title: qsTrc("notation", "Parts")
 
-    contentWidth: 664
+    contentWidth: 920
     contentHeight: 558
 
     modal: true
@@ -104,6 +104,14 @@ StyledDialogView {
                 onClicked: {
                     root.hide()
                 }
+            }
+
+            FlatButton {
+                text: qsTrc("notation", "Combine selected into player part")
+                buttonRole: ButtonBoxModel.CustomRole
+                buttonId: ButtonBoxModel.CustomButton + 4
+                enabled: partsModel.hasSelection
+                onClicked: partsModel.combineSelectedParts()
             }
 
             FlatButton {

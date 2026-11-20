@@ -5,6 +5,7 @@
 #pragma once
 
 #include <vector>
+#include <optional>
 
 #include "global/types/string.h"
 
@@ -24,6 +25,8 @@ struct NumericPulseDegree {
     int inputIndex = -1;
     muse::String label;
     muse::String action;
+    // Sample-limited instruments can provide one recorded register per degree.
+    std::optional<int> fixedRegister;
 };
 
 struct NumericPulseProfile {

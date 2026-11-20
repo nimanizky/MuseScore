@@ -51,6 +51,7 @@ public:
 
     virtual int mscVersion() const = 0;
 
+    virtual IExcerptNotationPtr createPlayerExcerpt(const QString& name, const ExcerptNotationList& sources) const = 0;
     virtual IExcerptNotationPtr createEmptyExcerpt(const QString& name = QString()) const = 0;
 
     virtual const ExcerptNotationList& excerpts() const = 0;

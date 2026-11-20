@@ -88,6 +88,9 @@ bool NumericPulseProfile::isValid() const
         const int pitchClass = (degree.scorePitch % 12 + 12) % 12;
         const int minimumPitch = degree.scorePitch + minimumRegister * 12;
         const int maximumPitch = degree.scorePitch + maximumRegister * 12;
+        if (degree.fixedRegister && (*degree.fixedRegister < minimumRegister || *degree.fixedRegister > maximumRegister)) {
+            return false;
+        }
         if (degree.number <= 0 || degree.scorePitch < 0 || degree.scorePitch > 127
             || minimumPitch < 0 || maximumPitch > 127
             || degree.inputIndex < 0 || degree.inputIndex > 6 || degree.label.empty() || degree.action.empty()
@@ -133,6 +136,9 @@ void NumericPulseProfile::read(XmlReader& e)
             degree.inputStep = e.intAttribute("inputStep");
             degree.inputIndex = e.intAttribute("inputIndex", -1);
             degree.action = e.attribute("action");
+            if (e.hasAttribute("register")) {
+                degree.fixedRegister = e.intAttribute("register");
+            }
             degree.label = e.readText();
             degrees.push_back(degree);
         } else {
@@ -162,6 +168,14 @@ void NumericPulseProfile::write(XmlWriter& xml) const
     xml.tag("maximumRegister", maximumRegister);
     xml.tag("defaultRegister", defaultRegister);
     for (const NumericPulseDegree& degree : degrees) {
+        if (degree.fixedRegister) {
+            xml.tag("degree", {
+                { "number", degree.number }, { "pitch", degree.scorePitch },
+                { "inputStep", degree.inputStep }, { "inputIndex", degree.inputIndex },
+                { "action", degree.action }, { "register", *degree.fixedRegister }
+            }, degree.label);
+            continue;
+        }
         xml.tag("degree", {
             { "number", degree.number },
             { "pitch", degree.scorePitch },
@@ -357,6 +371,9 @@ int numericPulseRegister(const NumericPulseProfile* profile, int pitch)
 int numericPulsePitch(const NumericPulseProfile* profile, const NumericPulseDegree* degree, int registerOffset)
 {
     if (!profile || !degree || registerOffset < profile->minimumRegister || registerOffset > profile->maximumRegister) {
+        return -1;
+    }
+    if (degree->fixedRegister && registerOffset != *degree->fixedRegister) {
         return -1;
     }
 
