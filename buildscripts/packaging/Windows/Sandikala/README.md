@@ -23,3 +23,9 @@ Distribute the sound-pack EXE and **all** its BIN slices together. Install the a
 On a clean Windows installation, install both packages. Open a Kepatihan score, confirm each custom TSI selects its bundled soundfont, play it, export WAV, and reopen the saved score. Repeat on Windows 10 and 11. Confirm the program does not require the original Mac, an external drive, Qt, or source directories. Check the installed sound folder against the source soundfont filenames.
 
 These scripts prepare packaging; a successful Windows runner build and installation tests are still required to produce and validate the distributable.
+
+## Ready-to-share sound pack made on macOS
+
+Run `python3 buildscripts/packaging/Windows/Sandikala/prepare_sound_pack.py soundfont builds/Windows-Sound-Pack`.
+This produces one lossless ZIP per soundfont and `Sound-Pack-Installer.zip` containing the installer scripts and checksums.
+Share every soundfont ZIP together with Sound-Pack-Installer.zip. The recipient extracts only Sound-Pack-Installer.zip into the folder with the other ZIP files, installs the application MSI, closes the app, and double-clicks Install-Sound-Pack.cmd. Administrator approval is required to write to Program Files. The installer verifies all archives before extracting any, and verifies the installed soundfonts afterward. Custom application locations can be passed to the PowerShell script with `-AppDirectory`.
